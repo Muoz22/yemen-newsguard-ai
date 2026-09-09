@@ -6,6 +6,15 @@ import streamlit as st
 from src.analyzer import analyze_news
 from src.media import extract_video_frames, fetch_public_facebook, image_to_data_url, vision_analysis
 
+# Streamlit Cloud stores secrets in st.secrets rather than os.environ.
+# Mirror only the relevant values so the shared analysis helpers can use them.
+try:
+    for _secret_name in ("OPENAI_API_KEY", "OPENAI_API_BASE", "NEWSGUARD_VISION_MODEL"):
+        if _secret_name in st.secrets and st.secrets[_secret_name]:
+            os.environ[_secret_name] = str(st.secrets[_secret_name])
+except Exception:
+    pass
+
 st.set_page_config(page_title="Yemen NewsGuard AI", page_icon="🛡️", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
@@ -33,7 +42,10 @@ with st.sidebar:
     st.caption("منصة تحقق متعددة الوسائط للسياق اليمني")
     st.divider()
     use_ai = st.toggle("تفعيل تحليل AI", value=True)
-    if not os.getenv("OPENAI_API_KEY"):
+    ai_key_loaded = bool(os.getenv("OPENAI_API_KEY"))
+    if ai_key_loaded:
+        st.success("اتصال AI مفعّل")
+    else:
         st.warning("لم تتم إضافة OPENAI_API_KEY؛ التحليل النصي المحلي متاح، وتحليل الصور/الفيديو يحتاج مفتاحاً.")
     st.info("النتيجة مساعدة أولية وليست حكماً نهائياً أو دليلاً على صحة المحتوى.")
 
