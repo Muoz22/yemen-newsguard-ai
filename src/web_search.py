@@ -34,6 +34,7 @@ class SearchResult:
     match: float = 0.0
     channel: str = "ويب عام"
     searched_query: str = ""
+    match_type: str = ""
 
 
 def _request(url: str, timeout: int = 15) -> str:
@@ -175,6 +176,15 @@ def _enrich_page(result: SearchResult) -> SearchResult:
     return result
 
 
+def _social_channel(url: str) -> str:
+    host = url.lower()
+    if "facebook.com" in host or "fb.watch" in host:
+        return "Facebook عام"
+    if "x.com" in host or "twitter.com" in host:
+        return "X / Twitter عام"
+    return ""
+
+
 def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> list[dict]:
     """Search public indexed news and configured public pages, deduplicated by URL."""
     query = re.sub(r"\s+", " ", (query or "")).strip()
@@ -204,6 +214,8 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
         feeds = [
             (f"https://news.google.com/rss/search?q={encoded}&hl=ar&gl=YE&ceid=YE:ar", "Google News"),
             (f"https://www.bing.com/news/search?q={encoded}&format=rss", "Bing News"),
+            (f"https://news.google.com/rss/search?q={quote('site:facebook.com ' + search_query[:180])}&hl=ar&gl=YE&ceid=YE:ar", "Facebook عام عبر فهرس الأخبار"),
+            (f"https://news.google.com/rss/search?q={quote('site:x.com ' + search_query[:180])}&hl=ar&gl=YE&ceid=YE:ar", "X عام عبر فهرس الأخبار"),
         ]
         for url, channel in feeds:
             try:
@@ -228,8 +240,16 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     ranked = _similarity(query, list(unique.values()))
     for item in ranked:
         item.match = _exactness(query, item)
+        social = _social_channel(item.url)
+        if social:
+            item.channel = social
+            item.match_type = "مطابق/مشابه من منصة اجتماعية"
+        elif item.match >= 0.75:
+            item.match_type = "تطابق قوي"
+        else:
+            item.match_type = "تطابق جزئي"
     ranked.sort(key=lambda item: item.match, reverse=True)
     # Keep weakly related headlines out of the evidence table. A low score is
     # not evidence that the claim was published; it is only a search lead.
-    ranked = [item for item in ranked if item.match >= 0.60]
+    ranked = [item for item in ranked if item.match >= 0.60 or (_social_channel(item.url) and item.match >= 0.35)]
     return [asdict(item) for item in ranked[:max_results]]

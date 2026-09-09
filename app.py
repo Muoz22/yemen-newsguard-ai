@@ -115,8 +115,17 @@ with tab_text:
         st.markdown("#### أين ظهر هذا الخبر؟")
         if web_results:
             web_df = pd.DataFrame(web_results)
-            web_df = web_df.rename(columns={"title": "العنوان", "url": "الرابط", "source": "المصدر", "published": "التاريخ", "snippet": "ملخص", "match": "التشابه النصي", "channel": "القناة", "searched_query": "عبارة البحث"})
-            st.dataframe(web_df[["العنوان", "المصدر", "القناة", "التاريخ", "التشابه النصي", "عبارة البحث", "الرابط"]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
+            web_df = web_df.rename(columns={"title": "العنوان", "url": "الرابط", "source": "المصدر", "published": "التاريخ", "snippet": "ملخص", "match": "التشابه النصي", "channel": "القناة", "searched_query": "عبارة البحث", "match_type": "نوع التطابق"})
+            social_df = web_df[web_df["القناة"].astype(str).str.contains("Facebook|Twitter|X /", case=False, regex=True)]
+            news_df = web_df[~web_df.index.isin(social_df.index)]
+            if not news_df.empty:
+                st.markdown("##### مواقع الأخبار والويب")
+                st.dataframe(news_df[["العنوان", "المصدر", "القناة", "التاريخ", "التشابه النصي", "نوع التطابق", "الرابط"]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
+            if not social_df.empty:
+                st.markdown("##### منشورات وصفحات Facebook وX العامة")
+                st.dataframe(social_df[["العنوان", "المصدر", "القناة", "التاريخ", "التشابه النصي", "نوع التطابق", "الرابط"]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
+            elif os.getenv("TAVILY_API_KEY"):
+                st.info("لم يجد فهرس الويب منشوراً عاماً مطابقاً من Facebook أو X لهذا النص. قد يكون المنشور غير مفهرس أو يتطلب تسجيل الدخول.")
             max_match = max(float(value) for value in web_df["التشابه النصي"])
             if max_match < 0.45:
                 st.warning("لم يظهر تطابق قريب بما يكفي مع نص الخبر. النتائج أعلاه مجرد مواد مرتبطة للمتابعة وليست دليلاً على أن نفس الخبر نُشر فيها.")
