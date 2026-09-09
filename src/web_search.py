@@ -40,7 +40,7 @@ class SearchResult:
     publisher_type: str = ""
 
 
-def _request(url: str, timeout: int = 15) -> str:
+def _request(url: str, timeout: int = 8) -> str:
     response = requests.get(url, headers=HEADERS, timeout=timeout)
     response.raise_for_status()
     return response.text
@@ -207,7 +207,7 @@ def _exactness(query: str, result: SearchResult) -> float:
 def _enrich_page(result: SearchResult) -> SearchResult:
     """Read a public result page so matching uses article text, not only a headline."""
     try:
-        html = _request(result.url, timeout=10)
+        html = _request(result.url, timeout=4)
         soup = BeautifulSoup(html, "html.parser")
         for node in soup(["script", "style", "noscript", "svg"]):
             node.decompose()
@@ -325,7 +325,7 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
             except requests.RequestException:
                 continue
         collected.extend(_bing_html_results(search_query))
-        if sources_path.exists():
+        if sources_path.exists() and search_query == variants[0]:
             try:
                 for raw in pd.read_csv(sources_path).fillna("").get("url", []):
                     domain = urlsplit(str(raw)).netloc.replace("www.", "")
@@ -341,7 +341,9 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     for result in collected:
         if result.url and result.url not in unique:
             unique[result.url] = result
-    candidates = list(unique.values())[:20]
+    # Search providers often put generic stories first. Keep a broad candidate
+    # pool so a relevant domain is not discarded before page verification.
+    candidates = list(unique.values())[:50]
     for index, item in enumerate(candidates):
         candidates[index] = _enrich_page(item)
     unique.update({item.url: item for item in candidates})
