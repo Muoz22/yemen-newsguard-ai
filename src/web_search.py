@@ -1,19 +1,18 @@
-"""Public web/news discovery for Yemen NewsGuard AI.
+"""Public web/news discovery for claim comparison.
 
-Evidence-oriented search: aggregators are discovery layers, source attribution is
-validated when possible, and results are ranked by event relevance and diversity.
-Only public/indexed content is used.
+This searches indexed public web/news feeds and configured public source pages.
+It does not bypass logins, private posts, paywalls, or platform API restrictions.
 """
 from __future__ import annotations
 
-import json
-import os
 import re
 import warnings
+import os
 from dataclasses import asdict, dataclass
-from difflib import SequenceMatcher
+from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote, urljoin, urlsplit, urlunsplit
+from urllib.parse import quote, urljoin, urlsplit
+from difflib import SequenceMatcher
 
 import pandas as pd
 import requests
@@ -22,14 +21,8 @@ from bs4 import XMLParsedAsHTMLWarning
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; YemenNewsGuard/1.3)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; YemenNewsGuard/1.0; +https://github.com/Muoz22/yemen-newsguard-ai)"}
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
-
-AGGREGATOR_HOSTS = {"sahaafa.net": "صحافة نت"}
-STOPWORDS = {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "الى", "إلى", "وقد", "كما", "أن", "إن", "تم", "مع", "بعد", "قبل", "هو", "هي", "كان", "كانت", "اليمن", "اليمني"}
-LOCATIONS = {"صنعاء", "عدن", "تعز", "الضالع", "مارب", "مأرب", "الحديدة", "الجوف", "شبوة", "ابين", "أبين", "حضرموت", "البيضاء", "الزاهر", "المخا"}
-ACTIONS = {"استهداف", "استهدف", "اشتباكات", "اشتباك", "قصف", "انفجار", "مقتل", "قتل", "إصابة", "اصابة", "وصول", "زيارة", "صرف", "إحراق", "احراق", "تقدم", "تعزيزات", "اعتراض", "إسقاط", "اسقاط"}
-
 
 @dataclass
 class SearchResult:
@@ -42,421 +35,334 @@ class SearchResult:
     channel: str = "ويب عام"
     searched_query: str = ""
     match_type: str = ""
-    publisher_name: str = ""
-    publisher_url: str = ""
-    aggregator: str = ""
-    attribution_status: str = "غير متحقق"
     relation: str = ""
-    evidence_score: float = 0.0
+    attributed_source: str = ""
+    publisher_type: str = ""
 
 
 def _request(url: str, timeout: int = 15) -> str:
-    response = requests.get(url, headers=HEADERS, timeout=timeout, allow_redirects=True)
+    response = requests.get(url, headers=HEADERS, timeout=timeout)
     response.raise_for_status()
     return response.text
 
 
-def _host(url: str) -> str:
-    try:
-        return urlsplit(str(url)).netloc.lower().split(":")[0].removeprefix("www.")
-    except Exception:
-        return ""
-
-
-def _canonical_url(url: str) -> str:
-    try:
-        parts = urlsplit(str(url).strip())
-        if not parts.scheme or not parts.netloc:
-            return str(url).strip()
-        return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/") or "/", "", ""))
-    except Exception:
-        return str(url).strip()
-
-
-def _normalise(value: str) -> str:
-    text = str(value or "").lower()
-    text = text.replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ى", "ي")
-    text = re.sub(r"[ـًٌٍَُِّْٱ]", "", text)
-    text = re.sub(r"[^\wء-ي ]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _tokens(value: str) -> list[str]:
-    return [w for w in _normalise(value).split() if len(w) > 2 and w not in STOPWORDS]
-
-
-def _domain_label(url: str) -> str:
-    return AGGREGATOR_HOSTS.get(_host(url), _host(url))
-
-
-def _social_channel(url: str) -> str:
-    host = _host(url)
-    if host == "facebook.com" or host.endswith("facebook.com") or host == "fb.watch":
-        return "Facebook عام"
-    if host == "x.com" or host.endswith("x.com") or host == "twitter.com" or host.endswith("twitter.com"):
-        return "X / Twitter عام"
-    return ""
-
-
 def _rss_results(url: str, channel: str) -> list[SearchResult]:
-    try:
-        soup = BeautifulSoup(_request(url), "html.parser")
-    except requests.RequestException:
-        return []
-    output: list[SearchResult] = []
+    # html.parser ships with Python and also handles the simple RSS tags we need.
+    # Using the optional XML parser caused FeatureNotFound on Streamlit Cloud.
+    soup = BeautifulSoup(_request(url), "html.parser")
+    results: list[SearchResult] = []
     for item in soup.find_all("item"):
-        def text(name: str) -> str:
-            node = item.find(name)
-            return node.get_text(" ", strip=True) if node else ""
+        def text(tag_name: str) -> str:
+            tag = item.find(tag_name)
+            return tag.get_text(" ", strip=True) if tag else ""
+
         title = text("title")
         link = text("link")
-        if not title or not link:
-            continue
         description = text("description")
+        date = text("pubDate")
         source_node = item.find("source")
-        source = source_node.get_text(" ", strip=True) if source_node else _domain_label(link)
-        output.append(SearchResult(title=BeautifulSoup(title, "html.parser").get_text(" ", strip=True), url=link, source=source, published=text("pubDate"), snippet=BeautifulSoup(description, "html.parser").get_text(" ", strip=True)[:1200], channel=channel))
-    return output
+        source = source_node.get_text(" ", strip=True) if source_node else channel
+        if title and link:
+            results.append(SearchResult(title=BeautifulSoup(title, "html.parser").get_text(" ", strip=True), url=link,
+                                        source=source, published=date or "", snippet=BeautifulSoup(description or "", "html.parser").get_text(" ", strip=True)[:300], channel=channel))
+    return results
 
 
-def _bing_results(query: str) -> list[SearchResult]:
+def _bing_html_results(query: str, channel: str = "Bing Web") -> list[SearchResult]:
+    """Parse public Bing result cards when RSS omits a short headline."""
     try:
-        soup = BeautifulSoup(_request("https://www.bing.com/search?q=" + quote(query[:240])), "html.parser")
+        soup = BeautifulSoup(_request("https://www.bing.com/search?q=" + quote(query[:220])), "html.parser")
+        results: list[SearchResult] = []
+        for card in soup.select("li.b_algo")[:10]:
+            anchor = card.select_one("h2 a")
+            if not anchor or not anchor.get("href"):
+                continue
+            snippet_node = card.select_one(".b_caption p")
+            results.append(SearchResult(title=anchor.get_text(" ", strip=True), url=anchor["href"], source=urlsplit(anchor["href"]).netloc,
+                                        published="", snippet=snippet_node.get_text(" ", strip=True) if snippet_node else "", channel=channel, searched_query=query))
+        return results
     except requests.RequestException:
         return []
-    output: list[SearchResult] = []
-    for card in soup.select("li.b_algo")[:12]:
-        anchor = card.select_one("h2 a")
-        if not anchor or not anchor.get("href"):
+
+
+def _source_page_results(sources_path: Path, query: str) -> list[SearchResult]:
+    if not sources_path.exists():
+        return []
+    sources = pd.read_csv(sources_path).fillna("")
+    terms = [term for term in re.findall(r"[\wء-ي]{3,}", query.lower()) if term not in {"من", "في", "على", "هذا", "التي", "الذي"}]
+    results: list[SearchResult] = []
+    for _, source in sources.iterrows():
+        if str(source.get("active", "TRUE")).upper() != "TRUE":
             continue
-        snippet = card.select_one(".b_caption p")
-        url = anchor["href"]
-        output.append(SearchResult(title=anchor.get_text(" ", strip=True), url=url, source=_domain_label(url), published="", snippet=snippet.get_text(" ", strip=True) if snippet else "", channel="Bing Web", searched_query=query))
-    return output
+        url = str(source.get("url", ""))
+        if not url.startswith("http"):
+            continue
+        try:
+            soup = BeautifulSoup(_request(url), "html.parser")
+            for link in soup.find_all("a", href=True):
+                title = link.get_text(" ", strip=True)
+                if len(title) < 18 or len(title) > 250:
+                    continue
+                haystack = title.lower()
+                overlap = sum(term in haystack for term in terms)
+                if overlap or not terms:
+                    results.append(SearchResult(title=title, url=urljoin(url, link["href"]), source=str(source.get("name", url)),
+                                                published="", snippet="نتيجة من صفحة المصدر العامة", match=min(0.99, overlap / max(1, len(terms))), channel="مصدر يمني مباشر"))
+        except requests.RequestException:
+            continue
+    return results
+
+
+def _similarity(query: str, results: list[SearchResult]) -> list[SearchResult]:
+    if not results:
+        return []
+    texts = [query] + [f"{r.title} {r.snippet}" for r in results]
+    try:
+        matrix = TfidfVectorizer(ngram_range=(1, 2), max_features=5000).fit_transform(texts)
+        scores = cosine_similarity(matrix[0:1], matrix[1:]).ravel()
+    except ValueError:
+        scores = [0.0] * len(results)
+    for result, score in zip(results, scores):
+        result.match = round(max(result.match, float(score)), 2)
+    return sorted(results, key=lambda r: r.match, reverse=True)
 
 
 def _tavily_results(query: str) -> list[SearchResult]:
-    key = os.getenv("TAVILY_API_KEY", "").strip()
-    if not key or key.lower() in {"your tavily key", "مفتاح tavily الخاص بك", "ضع-المفتاح-هنا"}:
+    """Use a real web index when TAVILY_API_KEY is configured."""
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key or api_key.strip().lower() in {"مفتاح tavily الخاص بك", "your tavily key", "ضع-المفتاح-هنا"}:
         return []
     try:
-        response = requests.post("https://api.tavily.com/search", json={"api_key": key, "query": query, "search_depth": "advanced", "max_results": 10, "include_answer": False, "include_raw_content": True}, timeout=30)
+        response = requests.post(
+            "https://api.tavily.com/search",
+            json={"api_key": api_key, "query": query, "search_depth": "advanced", "max_results": 10,
+                  "include_answer": False, "include_raw_content": True},
+            timeout=30,
+        )
         response.raise_for_status()
         items = response.json().get("results", [])
+        return [SearchResult(title=str(item.get("title", "")), url=str(item.get("url", "")),
+                             source=str(item.get("url", "")).split("/")[2] if item.get("url") else "ويب عام",
+                             published=str(item.get("published_date", "")), snippet=str(item.get("raw_content") or item.get("content", ""))[:10000],
+                             channel="فهرس ويب موسع", searched_query=query) for item in items if item.get("url")]
     except (requests.RequestException, ValueError, TypeError):
         return []
-    return [SearchResult(title=str(x.get("title", "")), url=str(x.get("url", "")), source=_domain_label(str(x.get("url", ""))), published=str(x.get("published_date", "")), snippet=str(x.get("raw_content") or x.get("content") or "")[:12000], channel="فهرس ويب موسع", searched_query=query) for x in items if x.get("url")]
 
 
-def _ai_search_plan(claim: str) -> list[str]:
-    key = os.getenv("OPENAI_API_KEY", "").strip()
-    if not key:
+def _ai_search_queries(claim: str) -> list[str]:
+    """Turn a long social post into precise searchable claim variants."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
         return []
     base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/")
-    prompt = ("حلل الادعاء التالي كخبير بحث إخباري. أعد JSON بالمفتاح queries ويحتوي 8 استعلامات عربية مستقلة للعثور على نفس الحدث، لا أخبار عامة مشابهة. استخدم فقط الأسماء والأماكن والأفعال الموجودة في الادعاء، ولا تخترع معلومات. نوّع بين العبارة المميزة، الشخص/الجهة، المكان+الفعل، الفعل+الشخص، والنتيجة المذكورة. لا تستخدم site:sahaafa.net. الادعاء: " + claim)
+    prompt = "استخرج 5 عبارات بحث عربية دقيقة للعثور على نفس الخبر المنشور، لا أخباراً عن موضوع مشابه. أعد JSON فقط بالمفتاح queries، واجعل إحدى العبارات جملة مميزة من 8 إلى 14 كلمة. لا تضف معلومات غير موجودة. الادعاء: " + claim
     try:
-        response = requests.post(f"{base}/chat/completions", headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json={"model": os.getenv("NEWSGUARD_SEARCH_MODEL", "gpt-4o-mini"), "temperature": 0, "response_format": {"type": "json_object"}, "messages": [{"role": "user", "content": prompt}]}, timeout=30)
+        response = requests.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": os.getenv("NEWSGUARD_SEARCH_MODEL", "gpt-4o-mini"), "temperature": 0,
+                  "response_format": {"type": "json_object"},
+                  "messages": [{"role": "user", "content": prompt}]},
+            timeout=30,
+        )
         response.raise_for_status()
-        data = json.loads(response.json()["choices"][0]["message"]["content"])
-        return list(dict.fromkeys(str(q).strip() for q in data.get("queries", []) if str(q).strip()))[:8]
+        data = __import__("json").loads(response.json()["choices"][0]["message"]["content"])
+        return [str(q).strip() for q in data.get("queries", []) if str(q).strip()][:5]
     except (requests.RequestException, KeyError, ValueError, TypeError):
         return []
 
 
-def _fallback_plan(claim: str) -> list[str]:
-    words = _tokens(claim)
-    values = [claim[:200]]
-    if len(words) >= 4:
-        values += [" ".join(words[:8]), " ".join(words[-8:]), " ".join(words[:5]), " ".join(words[-5:])]
-    return list(dict.fromkeys(x for x in values if x.strip()))[:6]
+def _exactness(query: str, result: SearchResult) -> float:
+    """Score whether a page contains the same claim, not merely the same topic."""
+    stopwords = {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "إلى", "وقد", "كما", "أن", "إن", "تم", "مع", "بعد", "قبل"}
 
+    def normalize(value: str) -> str:
+        value = str(value or "").lower().replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ى", "ي")
+        value = re.sub(r"[^\wء-ي ]", " ", value)
+        return re.sub(r"\s+", " ", value).strip()
 
-def _extract_sahaafa_attribution(soup: BeautifulSoup, page_url: str) -> tuple[str, str]:
-    """Return the publisher label and actual publisher href when explicitly present."""
-    candidates: list[tuple[str, str]] = []
-    marker_re = re.compile(r"المصدر\s*:?")
-    for node in soup.find_all(string=marker_re):
-        parent = getattr(node, "parent", None)
-        if not parent:
-            continue
-        containers = [parent]
-        if parent.parent:
-            containers.append(parent.parent)
-        for container in containers:
-            for link in container.find_all("a", href=True):
-                name = link.get_text(" ", strip=True)
-                href = urljoin(page_url, str(link.get("href", "")))
-                if name and "صحافة نت" not in name and _host(href) != "sahaafa.net":
-                    candidates.append((name, href))
-            if candidates:
-                break
-        if candidates:
-            break
-    if candidates:
-        return candidates[0]
-    for meta in soup.find_all("meta"):
-        prop = str(meta.get("property") or meta.get("name") or "").lower()
-        content = str(meta.get("content") or "").strip()
-        if prop in {"article:publisher", "og:site_name"} and content and content != "صحافة نت":
-            return content, ""
-    return "", ""
+    left = normalize(query)
+    right = normalize(f"{result.title} {result.snippet}")
+    query_words = [word for word in left.split() if len(word) > 2 and word not in stopwords]
+    page_words = set(right.split())
+    if not query_words or not page_words:
+        return 0.0
 
+    # An uninterrupted six-word phrase is strong evidence of a copied post.
+    for size in (8, 7, 6, 5):
+        for start in range(max(0, len(query_words) - size + 1)):
+            phrase = " ".join(query_words[start:start + size])
+            if phrase in right:
+                return 0.98
 
-def _jsonld_publisher(soup: BeautifulSoup) -> str:
-    for node in soup.find_all("script", attrs={"type": re.compile(r"ld\+json", re.I)}):
-        try:
-            data = json.loads(node.string or node.get_text())
-        except (ValueError, TypeError):
-            continue
-        items = data if isinstance(data, list) else [data]
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            publisher = item.get("publisher")
-            if isinstance(publisher, dict) and publisher.get("name"):
-                return str(publisher["name"]).strip()
-            if isinstance(publisher, str) and publisher.strip():
-                return publisher.strip()
-    return ""
-
-
-def _validate_attribution(result: SearchResult, soup: BeautifulSoup) -> SearchResult:
-    host = _host(result.url)
-    result.aggregator = AGGREGATOR_HOSTS.get(host, "")
-    if host not in AGGREGATOR_HOSTS:
-        publisher = _jsonld_publisher(soup)
-        result.publisher_name = publisher or result.source or host
-        result.publisher_url = _canonical_url(result.url)
-        result.source = result.publisher_name
-        result.attribution_status = "مباشر"
-        return result
-
-    name, href = _extract_sahaafa_attribution(soup, result.url)
-    result.publisher_name = name
-    result.publisher_url = _canonical_url(href) if href else ""
-    result.source = name or "غير متحقق"
-    result.attribution_status = "منسوب فقط" if name else "غير متحقق"
-
-    if not result.publisher_url:
-        return result
-    if _host(result.publisher_url) == host:
-        result.attribution_status = "غير متحقق"
-        result.source = "غير متحقق"
-        return result
-
-    try:
-        original_html = _request(result.publisher_url, timeout=10)
-        original_soup = BeautifulSoup(original_html, "html.parser")
-        og = original_soup.find("meta", attrs={"property": "og:title"})
-        if og and og.get("content"):
-            original_title = str(og.get("content"))
-        else:
-            h1 = original_soup.find("h1")
-            original_title = h1.get_text(" ", strip=True) if h1 else (original_soup.title.get_text(" ", strip=True) if original_soup.title else "")
-        title_score = SequenceMatcher(None, _normalise(result.title), _normalise(original_title)).ratio()
-        original_text = original_soup.get_text(" ", strip=True)[:18000]
-        title_tokens = set(_tokens(result.title))
-        text_tokens = set(_tokens(original_text))
-        overlap = len(title_tokens & text_tokens) / max(1, len(title_tokens))
-        if title_score >= 0.72 or overlap >= 0.60:
-            result.attribution_status = "متحقق"
-        else:
-            result.attribution_status = "غير متحقق"
-            result.source = "غير متحقق"
-    except requests.RequestException:
-        result.attribution_status = "غير متحقق"
-        result.source = "غير متحقق"
-    return result
+    overlap = len(set(query_words) & page_words) / len(set(query_words))
+    title = normalize(result.title)
+    title_similarity = SequenceMatcher(None, left, title).ratio()
+    # Related stories normally share only actors or a location; require broad
+    # claim coverage before calling a result a match.
+    score = overlap * 0.72 + title_similarity * 0.28
+    return round(score, 2) if overlap >= 0.65 else round(score * 0.45, 2)
 
 
 def _enrich_page(result: SearchResult) -> SearchResult:
+    """Read a public result page so matching uses article text, not only a headline."""
     try:
-        html = _request(result.url, timeout=12)
+        html = _request(result.url, timeout=10)
         soup = BeautifulSoup(html, "html.parser")
-        if _host(result.url) in AGGREGATOR_HOSTS:
-            result = _validate_attribution(result, soup)
-        else:
-            publisher = _jsonld_publisher(soup)
-            if not result.source or result.source == _host(result.url):
-                result.source = publisher or _domain_label(result.url)
-            result.publisher_name = result.source
-            result.publisher_url = _canonical_url(result.url)
-            result.attribution_status = "مباشر"
-        clean_soup = BeautifulSoup(html, "html.parser")
-        for node in clean_soup(["script", "style", "noscript", "svg"]):
+        for node in soup(["script", "style", "noscript", "svg"]):
             node.decompose()
-        body = clean_soup.get_text(" ", strip=True)
+        body = soup.get_text(" ", strip=True)
         if body:
-            result.snippet = (result.snippet + " " + body[:14000])[:16000]
-        if not result.published:
-            for attr in ["article:published_time", "datePublished", "pubdate"]:
-                meta = clean_soup.find("meta", attrs={"property": attr}) or clean_soup.find("meta", attrs={"name": attr})
-                if meta and meta.get("content"):
-                    result.published = str(meta.get("content"))
-                    break
+            result.snippet = f"{result.snippet} {body[:10000]}"[:11000]
     except requests.RequestException:
         pass
     return result
 
 
-def _event_score(claim: str, result: SearchResult) -> float:
-    claim_tokens = set(_tokens(claim))
-    page_text = f"{result.title} {result.snippet}"
-    page_tokens = set(_tokens(page_text))
-    if not claim_tokens or not page_tokens:
-        return 0.0
-    overlap = len(claim_tokens & page_tokens) / len(claim_tokens)
-    title_sim = SequenceMatcher(None, _normalise(claim), _normalise(result.title)).ratio()
-    try:
-        matrix = TfidfVectorizer(ngram_range=(1, 2), max_features=5000).fit_transform([claim, page_text[:12000]])
-        body_sim = float(cosine_similarity(matrix[0:1], matrix[1:2]).ravel()[0])
-    except ValueError:
-        body_sim = 0.0
-    claim_locs = {x for x in claim_tokens if x in LOCATIONS}
-    claim_actions = {x for x in claim_tokens if x in ACTIONS}
-    location_overlap = len(claim_locs & page_tokens) / max(1, len(claim_locs)) if claim_locs else 0.0
-    action_overlap = len(claim_actions & page_tokens) / max(1, len(claim_actions)) if claim_actions else 0.0
-    score = overlap * 0.30 + title_sim * 0.25 + body_sim * 0.15 + location_overlap * 0.15 + action_overlap * 0.10
-    normal_claim = _normalise(claim)
-    normal_page = _normalise(page_text)
-    query_words = _tokens(claim)
-    for size in (8, 7, 6, 5):
-        found = False
-        for start in range(max(0, len(query_words) - size + 1)):
-            phrase = " ".join(query_words[start:start + size])
-            if phrase and phrase in normal_page:
-                score += 0.20
-                found = True
-                break
-        if found:
-            break
-    if overlap < 0.45 and title_sim < 0.70:
-        score *= 0.55
-    return round(min(0.99, score), 2)
+def _social_channel(url: str) -> str:
+    host = url.lower()
+    if "facebook.com" in host or "fb.watch" in host:
+        return "Facebook عام"
+    if "x.com" in host or "twitter.com" in host:
+        return "X / Twitter عام"
+    return ""
 
 
-def _relation(score: float) -> str:
-    if score >= 0.78:
-        return "نفس الحدث"
-    if score >= 0.55:
-        return "سياق مرتبط"
-    return "غير ذي صلة"
-
-
-def _deduplicate(results: list[SearchResult]) -> list[SearchResult]:
-    unique: dict[str, SearchResult] = {}
-    for result in results:
-        key = _canonical_url(result.url)
-        if not key:
-            continue
-        old = unique.get(key)
-        if old is None or (result.attribution_status == "متحقق" and old.attribution_status != "متحقق") or len(result.snippet) > len(old.snippet):
-            unique[key] = result
-    return list(unique.values())
-
-
-def _diversify(results: list[SearchResult], limit: int) -> list[SearchResult]:
-    chosen: list[SearchResult] = []
-    counts: dict[str, int] = {}
-    regular_cap = max(3, min(5, limit // 5 if limit >= 15 else 3))
-    for result in results:
-        host = _host(result.url)
-        cap = 3 if host in AGGREGATOR_HOSTS else regular_cap
-        if counts.get(host, 0) >= cap:
-            continue
-        chosen.append(result)
-        counts[host] = counts.get(host, 0) + 1
-        if len(chosen) >= limit:
-            break
-    return chosen
+def _publisher_type(result: SearchResult) -> tuple[str, str]:
+    text = f"{result.title} {result.snippet}"
+    attributed = ""
+    found = re.search(r"(?:نقلاً عن|نقلا عن|بحسب|المصدر|عن مصدر|نقلًا عن)\s*[:：]?\s*([\wء-ي .-]{2,60})", text, re.I)
+    if found:
+        attributed = found.group(1).strip(" .،؛:-")
+    domain = urlsplit(result.url).netloc.lower()
+    if any(x in domain for x in ("sahaafa.net", "klyoum", "pressbee", "msader", "arabic.pressbee")):
+        kind = "ناقل/مجمع محتمل"
+    elif _social_channel(result.url):
+        kind = "منصة اجتماعية"
+    else:
+        kind = "ناشر ويب"
+    return kind, attributed
 
 
 def _user_provided_results(query: str) -> tuple[str, list[SearchResult]]:
+    """Inspect URLs pasted with the claim and keep them visible even if blocked."""
     urls = re.findall(r"https?://[^\s<>]+", query or "")
     clean_query = re.sub(r"https?://[^\s<>]+", " ", query or "")
     results: list[SearchResult] = []
-    for raw in dict.fromkeys(urls):
-        url = raw.rstrip(".,،؛")
-        result = SearchResult(title="رابط أدخله المستخدم", url=url, source=_host(url), published="", snippet="", channel=_social_channel(url) or "رابط مقدم من المستخدم", searched_query=clean_query.strip(), match_type="رابط مباشر مقدم من المستخدم")
-        result = _enrich_page(result)
-        if result.title == "رابط أدخله المستخدم":
-            result.title = _host(url)
+    for raw_url in dict.fromkeys(urls):
+        url = raw_url.rstrip(".,،؛")
+        host = urlsplit(url).netloc.lower()
+        channel = _social_channel(url) or "رابط مقدم من المستخدم"
+        result = SearchResult(title="رابط أدخله المستخدم", url=url, source=host, published="", snippet="",
+                              match=0.0, channel=channel, searched_query=clean_query.strip(), match_type="رابط مباشر مقدم من المستخدم")
+        try:
+            result = _enrich_page(result)
+            if result.title == "رابط أدخله المستخدم":
+                result.title = host
+        except Exception:
+            pass
         results.append(result)
     return clean_query.strip(), results
 
 
 def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> list[dict]:
-    query, direct = _user_provided_results(query)
+    """Search public indexed news and configured public pages, deduplicated by URL."""
+    query, direct_results = _user_provided_results(query)
     query = re.sub(r"\s+", " ", query).strip()
     if not query:
-        return [asdict(x) for x in direct]
-
-    variants = list(dict.fromkeys(_ai_search_plan(query) + _fallback_plan(query)))[:10]
-    collected: list[SearchResult] = list(direct)
+        return [asdict(item) for item in direct_results]
+    words = [w for w in re.findall(r"[\wء-ي]{3,}", query.lower()) if w not in {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "إلى", "وقد", "كما"}]
+    variants = [query[:180]]
+    if len(words) >= 4:
+        variants.append(" ".join(words[:8]))
+    # Search the event, place, and actors separately so a copied social post
+    # does not need to match a publisher's headline word for word.
+    if len(words) >= 4:
+        variants.append(" ".join(words[-6:]))
+    ai_variants = _ai_search_queries(query)
+    variants = ai_variants + variants
+    variants = list(dict.fromkeys(v for v in variants if v.strip()))[:5]
+    collected: list[SearchResult] = list(direct_results)
+    # Exact and platform-scoped searches reduce unrelated topic matches.
+    tavily_queries = [
+        query,
+        *ai_variants[:3],
+        f'"{query}"',
+        f'site:sahaafa.net "{query}"',
+        f'site:facebook.com "{query}"',
+        f'site:x.com "{query}"',
+        f'site:twitter.com "{query}"',
+    ]
+    if sources_path.exists():
+        try:
+            domains = []
+            for raw in pd.read_csv(sources_path).fillna("").get("url", []):
+                domain = urlsplit(str(raw)).netloc.replace("www.", "")
+                if domain and domain not in domains:
+                    domains.append(domain)
+            for domain in domains[:20]:
+                tavily_queries.append(f'site:{domain} "{query}"')
+        except (OSError, ValueError):
+            pass
+    for tavily_query in tavily_queries:
+        collected.extend(_tavily_results(tavily_query))
     for search_query in variants:
-        collected.extend(_tavily_results(search_query))
         encoded = quote(search_query[:240])
         feeds = [
             (f"https://news.google.com/rss/search?q={encoded}&hl=ar&gl=YE&ceid=YE:ar", "Google News"),
             (f"https://www.bing.com/news/search?q={encoded}&format=rss", "Bing News"),
+            (f"https://news.google.com/rss/search?q={quote('site:sahaafa.net ' + search_query[:180])}&hl=ar&gl=YE&ceid=YE:ar", "صحافة نت عبر فهرس الأخبار"),
+            (f"https://www.bing.com/news/search?q={quote('site:sahaafa.net ' + search_query[:180])}&format=rss", "صحافة نت عبر Bing"),
+            (f"https://news.google.com/rss/search?q={quote('site:facebook.com ' + search_query[:180])}&hl=ar&gl=YE&ceid=YE:ar", "Facebook عام عبر فهرس الأخبار"),
+            (f"https://news.google.com/rss/search?q={quote('site:x.com ' + search_query[:180])}&hl=ar&gl=YE&ceid=YE:ar", "X عام عبر فهرس الأخبار"),
         ]
-        for feed_url, channel in feeds:
-            for item in _rss_results(feed_url, channel):
-                item.searched_query = search_query
-                collected.append(item)
-        collected.extend(_bing_results(search_query))
-
-    # Configured direct sources are supplementary. Aggregators are not crawled as a primary source list.
-    if sources_path.exists():
-        try:
-            sources = pd.read_csv(sources_path).fillna("")
-            for _, source in sources.iterrows():
-                if str(source.get("active", "TRUE")).upper() != "TRUE":
-                    continue
-                base_url = str(source.get("url", "")).rstrip("/")
-                if not base_url.startswith("http") or _host(base_url) in AGGREGATOR_HOSTS:
-                    continue
-                try:
-                    soup = BeautifulSoup(_request(base_url, timeout=10), "html.parser")
-                except requests.RequestException:
-                    continue
-                for link in soup.find_all("a", href=True)[:120]:
-                    title = link.get_text(" ", strip=True)
-                    if len(title) < 15 or len(title) > 300:
-                        continue
-                    collected.append(SearchResult(title=title, url=urljoin(base_url, link["href"]), source=str(source.get("name", _host(base_url))), published="", snippet="نتيجة من مصدر يمني مُهيأ", channel="مصدر يمني مباشر", searched_query=query))
-        except (OSError, ValueError, TypeError):
-            pass
-
-    collected = _deduplicate(collected)
-    # Enrich a bounded candidate pool to keep Streamlit responsive.
-    collected.sort(key=lambda x: len(x.snippet), reverse=True)
-    candidates = collected[:100]
+        for url, channel in feeds:
+            try:
+                found = _rss_results(url, channel)
+                for result in found:
+                    result.searched_query = search_query
+                collected.extend(found)
+            except requests.RequestException:
+                continue
+        collected.extend(_bing_html_results(search_query))
+        if sources_path.exists():
+            try:
+                for raw in pd.read_csv(sources_path).fillna("").get("url", []):
+                    domain = urlsplit(str(raw)).netloc.replace("www.", "")
+                    if domain:
+                        collected.extend(_bing_html_results(f"site:{domain} {search_query}"))
+            except (OSError, ValueError):
+                pass
+        found = _source_page_results(sources_path, search_query)
+        for result in found:
+            result.searched_query = search_query
+        collected.extend(found)
+    unique: dict[str, SearchResult] = {}
+    for result in collected:
+        if result.url and result.url not in unique:
+            unique[result.url] = result
+    candidates = list(unique.values())[:20]
     for index, item in enumerate(candidates):
         candidates[index] = _enrich_page(item)
-
-    ranked: list[SearchResult] = []
-    for item in candidates:
-        item.match = _event_score(query, item)
-        item.relation = _relation(item.match)
-        item.evidence_score = item.match
+    unique.update({item.url: item for item in candidates})
+    ranked = _similarity(query, list(unique.values()))
+    for item in ranked:
+        item.match = _exactness(query, item)
         social = _social_channel(item.url)
-        if social:
-            item.channel = social
-        if item.attribution_status == "متحقق":
-            item.match_type = "مصدر أصلي متحقق — " + item.relation
-        elif item.aggregator:
-            item.match_type = "مجمع/فهرسة — مصدر منسوب" if item.match >= 0.55 else "مجمع/فهرسة — صلة ضعيفة"
+        item.publisher_type, item.attributed_source = _publisher_type(item)
+        direct = item.match_type == "رابط مباشر مقدم من المستخدم"
+        if direct:
+            item.match_type = "رابط مباشر مقدم من المستخدم — تعذر/تمكن قراءة المحتوى"
         elif social:
-            item.match_type = "منصة اجتماعية عامة — " + item.relation
-        elif item.match >= 0.78:
+            item.channel = social
+            item.match_type = "تطابق/سياق مرتبط من منصة اجتماعية"
+        elif item.match >= 0.75:
             item.match_type = "تطابق قوي"
-        elif item.match >= 0.55:
-            item.match_type = "سياق مرتبط"
         else:
-            item.match_type = "غير ذي صلة"
-        if item.match >= 0.50 or (social and item.match >= 0.35):
-            ranked.append(item)
-
-    ranked.sort(key=lambda x: (x.match, x.attribution_status == "متحقق", bool(x.publisher_url)), reverse=True)
-    return [asdict(x) for x in _diversify(ranked, max_results)]
+            item.match_type = "تطابق جزئي"
+        item.relation = "نفس الخبر/إعادة نشر محتملة" if item.match >= 0.75 else ("نفس الحدث أو سياق مرتبط" if item.match >= 0.35 else "موضوع قريب")
+    ranked.sort(key=lambda item: item.match, reverse=True)
+    # Keep weakly related headlines out of the evidence table. A low score is
+    # not evidence that the claim was published; it is only a search lead.
+    ranked = [item for item in ranked if item.match >= 0.60 or item.match_type.startswith("رابط مباشر مقدم من المستخدم") or (item.relation == "نفس الحدث أو سياق مرتبط" and item.publisher_type != "ناشر ويب")]
+    return [asdict(item) for item in ranked[:max_results]]
