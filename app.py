@@ -50,6 +50,10 @@ with st.sidebar:
         st.success("اتصال AI مفعّل")
     else:
         st.warning("لم تتم إضافة OPENAI_API_KEY؛ التحليل النصي المحلي متاح، وتحليل الصور/الفيديو يحتاج مفتاحاً.")
+    if os.getenv("TAVILY_API_KEY") and not os.getenv("TAVILY_API_KEY").startswith("مفتاح"):
+        st.success("بحث الويب الموسع مفعّل")
+    else:
+        st.warning("بحث Facebook وX الموسع يحتاج TAVILY_API_KEY حقيقياً")
     st.info("النتيجة مساعدة أولية وليست حكماً نهائياً أو دليلاً على صحة المحتوى.")
 
 st.markdown('<div class="hero" dir="rtl"><div class="badge">نص · صورة · فيديو · Facebook</div><h1>Yemen NewsGuard AI</h1><p>افحص الادعاء قبل المشاركة: حلّل النص، اقرأ ما في الصورة، راجع إطارات الفيديو، واستخرج البيانات العامة من منشورات Facebook.</p></div>', unsafe_allow_html=True)
