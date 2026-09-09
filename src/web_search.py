@@ -11,7 +11,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urljoin, urlsplit
 from difflib import SequenceMatcher
 
 import pandas as pd
@@ -185,11 +185,33 @@ def _social_channel(url: str) -> str:
     return ""
 
 
+def _user_provided_results(query: str) -> tuple[str, list[SearchResult]]:
+    """Inspect URLs pasted with the claim and keep them visible even if blocked."""
+    urls = re.findall(r"https?://[^\s<>]+", query or "")
+    clean_query = re.sub(r"https?://[^\s<>]+", " ", query or "")
+    results: list[SearchResult] = []
+    for raw_url in dict.fromkeys(urls):
+        url = raw_url.rstrip(".,،؛")
+        host = urlsplit(url).netloc.lower()
+        channel = _social_channel(url) or "رابط مقدم من المستخدم"
+        result = SearchResult(title="رابط أدخله المستخدم", url=url, source=host, published="", snippet="",
+                              match=0.0, channel=channel, searched_query=clean_query.strip(), match_type="رابط مباشر مقدم من المستخدم")
+        try:
+            result = _enrich_page(result)
+            if result.title == "رابط أدخله المستخدم":
+                result.title = host
+        except Exception:
+            pass
+        results.append(result)
+    return clean_query.strip(), results
+
+
 def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> list[dict]:
     """Search public indexed news and configured public pages, deduplicated by URL."""
-    query = re.sub(r"\s+", " ", (query or "")).strip()
+    query, direct_results = _user_provided_results(query)
+    query = re.sub(r"\s+", " ", query).strip()
     if not query:
-        return []
+        return [asdict(item) for item in direct_results]
     words = [w for w in re.findall(r"[\wء-ي]{3,}", query.lower()) if w not in {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "إلى", "وقد", "كما"}]
     variants = [query[:180]]
     if len(words) >= 4:
@@ -199,7 +221,7 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     if len(words) >= 4:
         variants.append(" ".join(words[-6:]))
     variants = list(dict.fromkeys(v for v in variants if v.strip()))
-    collected: list[SearchResult] = []
+    collected: list[SearchResult] = list(direct_results)
     # Exact and platform-scoped searches reduce unrelated topic matches.
     tavily_queries = [
         f'"{query}"',
@@ -241,7 +263,10 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     for item in ranked:
         item.match = _exactness(query, item)
         social = _social_channel(item.url)
-        if social:
+        direct = item.match_type == "رابط مباشر مقدم من المستخدم"
+        if direct:
+            item.match_type = "رابط مباشر مقدم من المستخدم — تعذر/تمكن قراءة المحتوى"
+        elif social:
             item.channel = social
             item.match_type = "مطابق/مشابه من منصة اجتماعية"
         elif item.match >= 0.75:
@@ -251,5 +276,5 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     ranked.sort(key=lambda item: item.match, reverse=True)
     # Keep weakly related headlines out of the evidence table. A low score is
     # not evidence that the claim was published; it is only a search lead.
-    ranked = [item for item in ranked if item.match >= 0.60 or (_social_channel(item.url) and item.match >= 0.35)]
+    ranked = [item for item in ranked if item.match >= 0.60 or (_social_channel(item.url) and item.match >= 0.35) or item.match_type.startswith("رابط مباشر مقدم من المستخدم")]
     return [asdict(item) for item in ranked[:max_results]]
