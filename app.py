@@ -10,7 +10,7 @@ from src.web_search import search_public_web
 # Streamlit Cloud stores secrets in st.secrets rather than os.environ.
 # Mirror only the relevant values so the shared analysis helpers can use them.
 try:
-    for _secret_name in ("OPENAI_API_KEY", "OPENAI_API_BASE", "NEWSGUARD_VISION_MODEL"):
+    for _secret_name in ("OPENAI_API_KEY", "OPENAI_API_BASE", "NEWSGUARD_VISION_MODEL", "TAVILY_API_KEY"):
         if _secret_name in st.secrets and st.secrets[_secret_name]:
             os.environ[_secret_name] = str(st.secrets[_secret_name])
 except Exception:
@@ -76,15 +76,28 @@ with tab_text:
             if search_web:
                 with st.spinner("يبحث في مصادر الأخبار العامة والويب..."):
                     st.session_state["web_results"] = search_public_web(text, DATA_PATH.parent / "sources.csv")
+                evidence = st.session_state["web_results"]
+                if evidence:
+                    best = max(float(item.get("match", 0)) for item in evidence)
+                    domains = {str(item.get("source", "")) for item in evidence if item.get("source")}
+                    result.score = round(1 - best, 2)
+                    result.confidence = round(min(0.95, 0.45 + best * 0.45 + min(len(domains), 3) * 0.04), 2)
+                    result.verdict = "تطابق قوي مع خبر منشور" if best >= 0.75 else ("تطابق جزئي يحتاج مراجعة" if best >= 0.45 else "لم يثبت تطابق الخبر")
+                    result.reasons = [f"أفضل تطابق خارجي: {best:.0%}.", f"عدد النطاقات الظاهرة: {len(domains)}.", "التقييم مبني على نتائج البحث العامة، وليس على قاعدة الأخبار التجريبية فقط."]
+                else:
+                    result.verdict = "لم تظهر أدلة منشورة متاحة"
+                    result.score = 0.5
+                    result.confidence = 0.35
+                    result.reasons = ["لم يعثر البحث العام على نتيجة مطابقة بالحد الأدنى.", "عدم العثور على الخبر لا يثبت أنه لم يُنشر."]
     result = st.session_state.get("text_result")
     if result:
         st.divider()
         a, b, c = st.columns(3)
         a.metric("التقييم المبدئي", result.verdict)
-        b.metric("مؤشر إشارات الخطر", f"{result.score:.0%}")
+        b.metric("مؤشر غياب التطابق", f"{result.score:.0%}")
         c.metric("الثقة", f"{result.confidence:.0%}")
         st.caption(f"المحرك: {result.model} — {result.source}")
-        st.warning("هذه النسبة ليست احتمال صحة أو تضليل، وليست مبنية على عدد نتائج البحث. هي مؤشر فرز أولي يعتمد على خصائص النص مثل غياب الرابط واللغة المثيرة وقِصر الادعاء.")
+        st.warning("هذه النسبة هي مؤشر لقوة الدليل الخارجي: كلما ارتفعت، كان التطابق مع الخبر المنشور أضعف. لا تمثل احتمال صحة الخبر.")
         st.progress(result.score)
         x, y = st.columns(2)
         with x:

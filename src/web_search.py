@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import re
 import warnings
+import os
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urljoin
+from difflib import SequenceMatcher
 
 import pandas as pd
 import requests
@@ -104,6 +106,39 @@ def _similarity(query: str, results: list[SearchResult]) -> list[SearchResult]:
     return sorted(results, key=lambda r: r.match, reverse=True)
 
 
+def _tavily_results(query: str) -> list[SearchResult]:
+    """Use a real web index when TAVILY_API_KEY is configured."""
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        return []
+    try:
+        response = requests.post(
+            "https://api.tavily.com/search",
+            json={"api_key": api_key, "query": query, "search_depth": "advanced", "max_results": 10,
+                  "include_answer": False, "include_raw_content": False},
+            timeout=30,
+        )
+        response.raise_for_status()
+        items = response.json().get("results", [])
+        return [SearchResult(title=str(item.get("title", "")), url=str(item.get("url", "")),
+                             source=str(item.get("url", "")).split("/")[2] if item.get("url") else "ويب عام",
+                             published=str(item.get("published_date", "")), snippet=str(item.get("content", ""))[:500],
+                             channel="فهرس ويب موسع", searched_query=query) for item in items if item.get("url")]
+    except (requests.RequestException, ValueError, TypeError):
+        return []
+
+
+def _exactness(query: str, result: SearchResult) -> float:
+    """Score whether a result is the same claim, not merely the same topic."""
+    left = re.sub(r"[^\wء-ي ]", " ", query.lower())
+    right = re.sub(r"[^\wء-ي ]", " ", f"{result.title} {result.snippet}".lower())
+    q_words = set(left.split())
+    r_words = set(right.split())
+    overlap = len(q_words & r_words) / max(1, len(q_words))
+    sequence = SequenceMatcher(None, left, right).ratio()
+    return round(max(result.match, overlap * 0.75 + sequence * 0.25), 2)
+
+
 def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> list[dict]:
     """Search public indexed news and configured public pages, deduplicated by URL."""
     query = re.sub(r"\s+", " ", (query or "")).strip()
@@ -119,6 +154,7 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
         variants.append(" ".join(words[-6:]))
     variants = list(dict.fromkeys(v for v in variants if v.strip()))
     collected: list[SearchResult] = []
+    collected.extend(_tavily_results(query))
     for search_query in variants:
         encoded = quote(search_query[:240])
         feeds = [
@@ -142,6 +178,9 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
         if result.url and result.url not in unique:
             unique[result.url] = result
     ranked = _similarity(query, list(unique.values()))
+    for item in ranked:
+        item.match = _exactness(query, item)
+    ranked.sort(key=lambda item: item.match, reverse=True)
     # Keep weakly related headlines out of the evidence table. A low score is
     # not evidence that the claim was published; it is only a search lead.
     ranked = [item for item in ranked if item.match >= 0.20]
