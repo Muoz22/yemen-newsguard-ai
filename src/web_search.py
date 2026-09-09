@@ -65,6 +65,23 @@ def _rss_results(url: str, channel: str) -> list[SearchResult]:
     return results
 
 
+def _bing_html_results(query: str, channel: str = "Bing Web") -> list[SearchResult]:
+    """Parse public Bing result cards when RSS omits a short headline."""
+    try:
+        soup = BeautifulSoup(_request("https://www.bing.com/search?q=" + quote(query[:220])), "html.parser")
+        results: list[SearchResult] = []
+        for card in soup.select("li.b_algo")[:10]:
+            anchor = card.select_one("h2 a")
+            if not anchor or not anchor.get("href"):
+                continue
+            snippet_node = card.select_one(".b_caption p")
+            results.append(SearchResult(title=anchor.get_text(" ", strip=True), url=anchor["href"], source=urlsplit(anchor["href"]).netloc,
+                                        published="", snippet=snippet_node.get_text(" ", strip=True) if snippet_node else "", channel=channel, searched_query=query))
+        return results
+    except requests.RequestException:
+        return []
+
+
 def _source_page_results(sources_path: Path, query: str) -> list[SearchResult]:
     if not sources_path.exists():
         return []
@@ -252,6 +269,7 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
         query,
         *ai_variants[:3],
         f'"{query}"',
+        f'site:sahaafa.net "{query}"',
         f'site:facebook.com "{query}"',
         f'site:x.com "{query}"',
         f'site:twitter.com "{query}"',
@@ -263,6 +281,8 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
         feeds = [
             (f"https://news.google.com/rss/search?q={encoded}&hl=ar&gl=YE&ceid=YE:ar", "Google News"),
             (f"https://www.bing.com/news/search?q={encoded}&format=rss", "Bing News"),
+            (f"https://news.google.com/rss/search?q={quote('site:sahaafa.net ' + search_query[:180])}&hl=ar&gl=YE&ceid=YE:ar", "صحافة نت عبر فهرس الأخبار"),
+            (f"https://www.bing.com/news/search?q={quote('site:sahaafa.net ' + search_query[:180])}&format=rss", "صحافة نت عبر Bing"),
             (f"https://news.google.com/rss/search?q={quote('site:facebook.com ' + search_query[:180])}&hl=ar&gl=YE&ceid=YE:ar", "Facebook عام عبر فهرس الأخبار"),
             (f"https://news.google.com/rss/search?q={quote('site:x.com ' + search_query[:180])}&hl=ar&gl=YE&ceid=YE:ar", "X عام عبر فهرس الأخبار"),
         ]
@@ -274,6 +294,7 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
                 collected.extend(found)
             except requests.RequestException:
                 continue
+        collected.extend(_bing_html_results(search_query))
         found = _source_page_results(sources_path, search_query)
         for result in found:
             result.searched_query = search_query
