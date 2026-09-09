@@ -11,7 +11,7 @@ import os
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-from urllib.parse import quote, urljoin, urlsplit
+from urllib.parse import quote, urljoin, urlsplit, parse_qs, unquote
 from difflib import SequenceMatcher
 
 import pandas as pd
@@ -78,7 +78,16 @@ def _bing_html_results(query: str, channel: str = "Bing Web") -> list[SearchResu
             if not anchor or not anchor.get("href"):
                 continue
             snippet_node = card.select_one(".b_caption p")
-            results.append(SearchResult(title=anchor.get_text(" ", strip=True), url=anchor["href"], source=urlsplit(anchor["href"]).netloc,
+            target = anchor["href"]
+            if "bing.com/ck/" in target:
+                encoded = parse_qs(urlsplit(target).query).get("u", [""])[0]
+                if encoded.startswith("a1"):
+                    import base64
+                    try:
+                        target = base64.urlsafe_b64decode(encoded[2:] + "===").decode("utf-8")
+                    except (ValueError, UnicodeDecodeError):
+                        target = unquote(encoded)
+            results.append(SearchResult(title=anchor.get_text(" ", strip=True), url=target, source=urlsplit(target).netloc,
                                         published="", snippet=snippet_node.get_text(" ", strip=True) if snippet_node else "", channel=channel, searched_query=query))
         return results
     except requests.RequestException:
