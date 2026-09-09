@@ -129,6 +129,29 @@ def _tavily_results(query: str) -> list[SearchResult]:
         return []
 
 
+def _ai_search_queries(claim: str) -> list[str]:
+    """Turn a long social post into precise searchable claim variants."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return []
+    base = os.getenv("OPENAI_API_BASE", "https://api.openai.com/v1").rstrip("/")
+    prompt = "استخرج 5 عبارات بحث عربية دقيقة للعثور على نفس الخبر المنشور، لا أخباراً عن موضوع مشابه. أعد JSON فقط بالمفتاح queries، واجعل إحدى العبارات جملة مميزة من 8 إلى 14 كلمة. لا تضف معلومات غير موجودة. الادعاء: " + claim
+    try:
+        response = requests.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            json={"model": os.getenv("NEWSGUARD_SEARCH_MODEL", "gpt-4o-mini"), "temperature": 0,
+                  "response_format": {"type": "json_object"},
+                  "messages": [{"role": "user", "content": prompt}]},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = __import__("json").loads(response.json()["choices"][0]["message"]["content"])
+        return [str(q).strip() for q in data.get("queries", []) if str(q).strip()][:5]
+    except (requests.RequestException, KeyError, ValueError, TypeError):
+        return []
+
+
 def _exactness(query: str, result: SearchResult) -> float:
     """Score whether a page contains the same claim, not merely the same topic."""
     stopwords = {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "إلى", "وقد", "كما", "أن", "إن", "تم", "مع", "بعد", "قبل"}
@@ -220,7 +243,8 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     # does not need to match a publisher's headline word for word.
     if len(words) >= 4:
         variants.append(" ".join(words[-6:]))
-    variants = list(dict.fromkeys(v for v in variants if v.strip()))
+    variants = _ai_search_queries(query) + variants
+    variants = list(dict.fromkeys(v for v in variants if v.strip()))[:8]
     collected: list[SearchResult] = list(direct_results)
     # Exact and platform-scoped searches reduce unrelated topic matches.
     tavily_queries = [
