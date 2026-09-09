@@ -109,7 +109,7 @@ def _similarity(query: str, results: list[SearchResult]) -> list[SearchResult]:
 def _tavily_results(query: str) -> list[SearchResult]:
     """Use a real web index when TAVILY_API_KEY is configured."""
     api_key = os.getenv("TAVILY_API_KEY")
-    if not api_key:
+    if not api_key or api_key.strip().lower() in {"مفتاح tavily الخاص بك", "your tavily key", "ضع-المفتاح-هنا"}:
         return []
     try:
         response = requests.post(
@@ -129,14 +129,35 @@ def _tavily_results(query: str) -> list[SearchResult]:
 
 
 def _exactness(query: str, result: SearchResult) -> float:
-    """Score whether a result is the same claim, not merely the same topic."""
-    left = re.sub(r"[^\wء-ي ]", " ", query.lower())
-    right = re.sub(r"[^\wء-ي ]", " ", f"{result.title} {result.snippet}".lower())
-    q_words = set(left.split())
-    r_words = set(right.split())
-    overlap = len(q_words & r_words) / max(1, len(q_words))
-    sequence = SequenceMatcher(None, left, right).ratio()
-    return round(max(result.match, overlap * 0.75 + sequence * 0.25), 2)
+    """Score whether a page contains the same claim, not merely the same topic."""
+    stopwords = {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "إلى", "وقد", "كما", "أن", "إن", "تم", "مع", "بعد", "قبل"}
+
+    def normalize(value: str) -> str:
+        value = str(value or "").lower().replace("أ", "ا").replace("إ", "ا").replace("آ", "ا").replace("ى", "ي")
+        value = re.sub(r"[^\wء-ي ]", " ", value)
+        return re.sub(r"\s+", " ", value).strip()
+
+    left = normalize(query)
+    right = normalize(f"{result.title} {result.snippet}")
+    query_words = [word for word in left.split() if len(word) > 2 and word not in stopwords]
+    page_words = set(right.split())
+    if not query_words or not page_words:
+        return 0.0
+
+    # An uninterrupted six-word phrase is strong evidence of a copied post.
+    for size in (8, 7, 6, 5):
+        for start in range(max(0, len(query_words) - size + 1)):
+            phrase = " ".join(query_words[start:start + size])
+            if phrase in right:
+                return 0.98
+
+    overlap = len(set(query_words) & page_words) / len(set(query_words))
+    title = normalize(result.title)
+    title_similarity = SequenceMatcher(None, left, title).ratio()
+    # Related stories normally share only actors or a location; require broad
+    # claim coverage before calling a result a match.
+    score = overlap * 0.72 + title_similarity * 0.28
+    return round(score, 2) if overlap >= 0.35 else round(score * 0.55, 2)
 
 
 def _enrich_page(result: SearchResult) -> SearchResult:
@@ -148,7 +169,7 @@ def _enrich_page(result: SearchResult) -> SearchResult:
             node.decompose()
         body = soup.get_text(" ", strip=True)
         if body:
-            result.snippet = f"{result.snippet} {body[:4000]}"[:5000]
+            result.snippet = f"{result.snippet} {body[:10000]}"[:11000]
     except requests.RequestException:
         pass
     return result
@@ -202,5 +223,5 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     ranked.sort(key=lambda item: item.match, reverse=True)
     # Keep weakly related headlines out of the evidence table. A low score is
     # not evidence that the claim was published; it is only a search lead.
-    ranked = [item for item in ranked if item.match >= 0.20]
+    ranked = [item for item in ranked if item.match >= 0.35]
     return [asdict(item) for item in ranked[:max_results]]
