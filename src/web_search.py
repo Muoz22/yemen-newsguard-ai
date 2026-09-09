@@ -139,6 +139,21 @@ def _exactness(query: str, result: SearchResult) -> float:
     return round(max(result.match, overlap * 0.75 + sequence * 0.25), 2)
 
 
+def _enrich_page(result: SearchResult) -> SearchResult:
+    """Read a public result page so matching uses article text, not only a headline."""
+    try:
+        html = _request(result.url, timeout=10)
+        soup = BeautifulSoup(html, "html.parser")
+        for node in soup(["script", "style", "noscript", "svg"]):
+            node.decompose()
+        body = soup.get_text(" ", strip=True)
+        if body:
+            result.snippet = f"{result.snippet} {body[:4000]}"[:5000]
+    except requests.RequestException:
+        pass
+    return result
+
+
 def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> list[dict]:
     """Search public indexed news and configured public pages, deduplicated by URL."""
     query = re.sub(r"\s+", " ", (query or "")).strip()
@@ -177,6 +192,10 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     for result in collected:
         if result.url and result.url not in unique:
             unique[result.url] = result
+    candidates = list(unique.values())[:20]
+    for index, item in enumerate(candidates):
+        candidates[index] = _enrich_page(item)
+    unique.update({item.url: item for item in candidates})
     ranked = _similarity(query, list(unique.values()))
     for item in ranked:
         item.match = _exactness(query, item)
