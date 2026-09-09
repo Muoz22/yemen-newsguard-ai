@@ -1,0 +1,16 @@
+field,type,description,required
+id,string,Unique news identifier,yes
+title,string,News headline,yes
+text,string,Full news text,yes
+source,string,Name of news source,yes
+source_type,string,Official/Media/Social/Other,yes
+date,date,Publication date,yes
+url,string,Original news URL,no
+claim,string,Main factual claim,yes
+label,string,Verification classification,yes
+evidence,string,Evidence supporting the assessment,no
+evidence_url,string,URL of supporting evidence,no
+topic,string,Political/Security/Economic/Social/Other,no
+location,string,Relevant Yemeni location,no
+confidence,float,Reviewer confidence from 0 to 1,no
+reviewer_notes,string,Human reviewer notes,no
