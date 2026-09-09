@@ -78,9 +78,13 @@ def story_id(claim: str) -> str:
     return fingerprint(claim)[:24]
 
 
+def _now_display() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
+
+
 def persist_report(report: dict, db_path: Path) -> dict:
     init_db(db_path)
-    now = datetime.now(timezone.utc).isoformat()
+    now = _now_display()
     sid = story_id(report.get("claim", ""))
     with sqlite3.connect(db_path) as con:
         con.execute(
@@ -115,14 +119,13 @@ def propagation_summary(report: dict, sid: str, db_path: Path) -> dict:
     init_db(db_path)
     with sqlite3.connect(db_path) as con:
         con.row_factory = sqlite3.Row
-        rows = [dict(r) for r in con.execute(
-            "SELECT * FROM observations WHERE story_id=? ORDER BY last_seen DESC", (sid,)
-        ).fetchall()]
+        rows = [dict(r) for r in con.execute("SELECT * FROM observations WHERE story_id=? ORDER BY last_seen DESC", (sid,)).fetchall()]
     evidence = report.get("evidence", [])
-    domains = Counter(x.get("domain") for x in rows if x.get("domain"))
+    # For Sahaafa aggregator pages, source is replaced by the original publisher name.
+    # This prevents the aggregator from being counted as if it were the only news outlet.
+    domain_labels = Counter((x.get("source") or x.get("domain")) if x.get("domain") == "sahaafa.net" else x.get("domain") for x in rows if x.get("domain") or x.get("source"))
     platforms = Counter(x.get("platform") for x in rows if x.get("platform"))
     strong = [x for x in rows if float(x.get("match", 0) or 0) >= 0.75]
-    # Only call a timestamp a candidate when it comes from the source metadata.
     dated = [x for x in rows if x.get("published") and str(x.get("published")).strip()]
     dated.sort(key=lambda x: str(x.get("published")))
     return {
@@ -130,7 +133,7 @@ def propagation_summary(report: dict, sid: str, db_path: Path) -> dict:
         "first_observed_candidate": dated[0] if dated else (rows[-1] if rows else None),
         "observations": len(rows),
         "strong_matches": len(strong),
-        "domain_counts": dict(domains),
+        "domain_counts": dict(domain_labels),
         "platform_counts": dict(platforms),
         "history": rows,
         "current_evidence": evidence,
