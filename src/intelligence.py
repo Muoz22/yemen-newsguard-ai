@@ -104,9 +104,18 @@ def persist_report(report: dict, db_path: Path) -> dict:
                     source,published,discovered_at,first_seen,last_seen,match,match_type,snippet,search_query
                 ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(story_id,canonical_url) DO UPDATE SET
-                    url=excluded.url, title=excluded.title, published=excluded.published,
-                    last_seen=excluded.last_seen, match=MAX(observations.match, excluded.match),
-                    match_type=excluded.match_type, snippet=excluded.snippet, search_query=excluded.search_query
+                    url=excluded.url,
+                    title=excluded.title,
+                    domain=excluded.domain,
+                    platform=excluded.platform,
+                    account_or_page=excluded.account_or_page,
+                    source=excluded.source,
+                    published=excluded.published,
+                    last_seen=excluded.last_seen,
+                    match=MAX(observations.match, excluded.match),
+                    match_type=excluded.match_type,
+                    snippet=excluded.snippet,
+                    search_query=excluded.search_query
                 """,
                 (oid, sid, url, cu, item.get("title", ""), item.get("domain", ""), item.get("platform", ""),
                  item.get("account_or_page", ""), item.get("source", ""), item.get("published", ""), now, now, now,
@@ -121,8 +130,6 @@ def propagation_summary(report: dict, sid: str, db_path: Path) -> dict:
         con.row_factory = sqlite3.Row
         rows = [dict(r) for r in con.execute("SELECT * FROM observations WHERE story_id=? ORDER BY last_seen DESC", (sid,)).fetchall()]
     evidence = report.get("evidence", [])
-    # For Sahaafa aggregator pages, source is replaced by the original publisher name.
-    # This prevents the aggregator from being counted as if it were the only news outlet.
     domain_labels = Counter((x.get("source") or x.get("domain")) if x.get("domain") == "sahaafa.net" else x.get("domain") for x in rows if x.get("domain") or x.get("source"))
     platforms = Counter(x.get("platform") for x in rows if x.get("platform"))
     strong = [x for x in rows if float(x.get("match", 0) or 0) >= 0.75]
