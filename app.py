@@ -102,6 +102,11 @@ with tab_text:
             web_df = pd.DataFrame(web_results)
             web_df = web_df.rename(columns={"title": "العنوان", "url": "الرابط", "source": "المصدر", "published": "التاريخ", "snippet": "ملخص", "match": "التشابه النصي", "channel": "القناة", "searched_query": "عبارة البحث"})
             st.dataframe(web_df[["العنوان", "المصدر", "القناة", "التاريخ", "التشابه النصي", "عبارة البحث", "الرابط"]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
+            max_match = max(float(value) for value in web_df["التشابه النصي"])
+            if max_match < 0.45:
+                st.warning("لم يظهر تطابق قريب بما يكفي مع نص الخبر. النتائج أعلاه مجرد مواد مرتبطة للمتابعة وليست دليلاً على أن نفس الخبر نُشر فيها.")
+            else:
+                st.success("ظهرت نتائج ذات تشابه نصي مرتفع نسبياً؛ افتح الروابط وراجع التاريخ والمصدر قبل اعتبارها إعادة نشر لنفس الخبر.")
             st.caption("النتائج مأخوذة من مصادر عامة وفهارس أخبار متاحة؛ عدم ظهور الخبر لا يعني أنه لم يُنشر في أي مكان.")
         else:
             st.info("لم تظهر نتائج عامة متاحة. جرّب عبارة أقصر أو أضف كلمات مثل المكان والجهة والتاريخ.")

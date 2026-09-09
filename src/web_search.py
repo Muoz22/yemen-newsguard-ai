@@ -6,6 +6,7 @@ It does not bypass logins, private posts, paywalls, or platform API restrictions
 from __future__ import annotations
 
 import re
+import warnings
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -14,10 +15,12 @@ from urllib.parse import quote, urljoin
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
+from bs4 import XMLParsedAsHTMLWarning
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; YemenNewsGuard/1.0; +https://github.com/Muoz22/yemen-newsguard-ai)"}
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 @dataclass
 class SearchResult:
@@ -138,4 +141,8 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     for result in collected:
         if result.url and result.url not in unique:
             unique[result.url] = result
-    return [asdict(item) for item in _similarity(query, list(unique.values()))[:max_results]]
+    ranked = _similarity(query, list(unique.values()))
+    # Keep weakly related headlines out of the evidence table. A low score is
+    # not evidence that the claim was published; it is only a search lead.
+    ranked = [item for item in ranked if item.match >= 0.20]
+    return [asdict(item) for item in ranked[:max_results]]
