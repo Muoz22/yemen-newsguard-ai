@@ -77,6 +77,8 @@ with tab_text:
                 with st.spinner("يبحث في مصادر الأخبار العامة والويب..."):
                     st.session_state["web_results"] = search_public_web(text, DATA_PATH.parent / "sources.csv")
                 evidence = st.session_state["web_results"]
+                result.model = "evidence-search-v2"
+                result.source = "بحث الويب العام + صفحات المصادر"
                 if evidence:
                     best = max(float(item.get("match", 0)) for item in evidence)
                     domains = {str(item.get("source", "")) for item in evidence if item.get("source")}
