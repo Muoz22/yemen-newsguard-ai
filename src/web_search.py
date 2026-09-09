@@ -37,7 +37,9 @@ def _request(url: str, timeout: int = 15) -> str:
 
 
 def _rss_results(url: str, channel: str) -> list[SearchResult]:
-    soup = BeautifulSoup(_request(url), "xml")
+    # html.parser ships with Python and also handles the simple RSS tags we need.
+    # Using the optional XML parser caused FeatureNotFound on Streamlit Cloud.
+    soup = BeautifulSoup(_request(url), "html.parser")
     results: list[SearchResult] = []
     for item in soup.find_all("item"):
         def text(tag_name: str) -> str:
