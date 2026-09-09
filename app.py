@@ -222,7 +222,7 @@ with tab_fb:
             st.warning("أدخل نص المنشور أولاً ثم اضغط تتبع الانتشار.")
         else:
             with st.spinner("يبحث عن إعادة النشر والصيغ المشابهة..."):
-                st.session_state["fb_propagation"] = search_public_web(combined, SOURCES_PATH, max_results=40)
+                st.session_state["fb_propagation"] = search_public_web(combined, SOURCES_PATH, max_results=40, include_related=True)
             st.session_state["fb_propagation_query"] = combined
     propagation = st.session_state.get("fb_propagation", [])
     if st.session_state.get("fb_propagation_query"):

@@ -274,7 +274,7 @@ def _user_provided_results(query: str) -> tuple[str, list[SearchResult]]:
     return clean_query.strip(), results
 
 
-def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> list[dict]:
+def search_public_web(query: str, sources_path: Path, max_results: int = 25, include_related: bool = False) -> list[dict]:
     """Search public indexed news and configured public pages, deduplicated by URL."""
     query, direct_results = _user_provided_results(query)
     query = re.sub(r"\s+", " ", query).strip()
@@ -375,5 +375,5 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     ranked.sort(key=lambda item: item.match, reverse=True)
     # Keep weakly related headlines out of the evidence table. A low score is
     # not evidence that the claim was published; it is only a search lead.
-    ranked = [item for item in ranked if item.match >= 0.60 or item.match_type.startswith("رابط مباشر مقدم من المستخدم") or (item.relation == "نفس الحدث أو سياق مرتبط" and item.publisher_type != "ناشر ويب")]
+    ranked = [item for item in ranked if item.match >= 0.60 or item.match_type.startswith("رابط مباشر مقدم من المستخدم") or (include_related and item.relation == "نفس الحدث أو سياق مرتبط") or (item.relation == "نفس الحدث أو سياق مرتبط" and item.publisher_type != "ناشر ويب")]
     return [asdict(item) for item in ranked[:max_results]]
