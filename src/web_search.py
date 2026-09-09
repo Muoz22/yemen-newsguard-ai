@@ -157,7 +157,7 @@ def _exactness(query: str, result: SearchResult) -> float:
     # Related stories normally share only actors or a location; require broad
     # claim coverage before calling a result a match.
     score = overlap * 0.72 + title_similarity * 0.28
-    return round(score, 2) if overlap >= 0.35 else round(score * 0.55, 2)
+    return round(score, 2) if overlap >= 0.65 else round(score * 0.45, 2)
 
 
 def _enrich_page(result: SearchResult) -> SearchResult:
@@ -223,5 +223,5 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     ranked.sort(key=lambda item: item.match, reverse=True)
     # Keep weakly related headlines out of the evidence table. A low score is
     # not evidence that the claim was published; it is only a search lead.
-    ranked = [item for item in ranked if item.match >= 0.35]
+    ranked = [item for item in ranked if item.match >= 0.60]
     return [asdict(item) for item in ranked[:max_results]]
