@@ -204,8 +204,6 @@ with tab_fb:
             if combined:
                 st.session_state["fb_metadata"] = metadata
                 st.session_state["fb_result"] = analyze_news(combined, df, use_ai=use_ai)
-                with st.spinner("يتتبع إعادة النشر والصيغ المشابهة عبر الويب وFacebook وX..."):
-                    st.session_state["fb_propagation"] = search_public_web(combined, SOURCES_PATH, max_results=40)
             else: st.warning("لم يمكن قراءة البيانات العامة؛ الصق نص المنشور يدوياً.")
     if st.session_state.get("fb_metadata", {}).get("status"): st.info(st.session_state["fb_metadata"]["status"])
     if st.session_state.get("fb_result"):
@@ -213,10 +211,27 @@ with tab_fb:
         a, b, c = st.columns(3)
         a.metric("التقييم", result.verdict); b.metric("المؤشر", f"{result.score:.0%}"); c.metric("الثقة", f"{result.confidence:.0%}")
         for item in result.reasons: st.markdown(f"- {item}")
+    st.markdown("#### تتبع إعادة النشر والصيغ المشابهة")
+    st.caption("أدخل نص المنشور أو رابطاً عاماً ثم شغّل التتبع للبحث عن الحسابات والصفحات التي أعادت نشره أو ناقشت الحدث نفسه.")
+    if st.button("تتبع الانتشار في الويب وFacebook وX", key="track_fb", type="secondary"):
+        metadata = st.session_state.get("fb_metadata", {})
+        if fb_url and not metadata:
+            metadata = fetch_public_facebook(fb_url)
+        combined = "\n".join(x for x in [metadata.get("title", ""), metadata.get("description", ""), fb_text] if x)
+        if not combined.strip():
+            st.warning("أدخل نص المنشور أولاً ثم اضغط تتبع الانتشار.")
+        else:
+            with st.spinner("يبحث عن إعادة النشر والصيغ المشابهة..."):
+                st.session_state["fb_propagation"] = search_public_web(combined, SOURCES_PATH, max_results=40)
+            st.session_state["fb_propagation_query"] = combined
     propagation = st.session_state.get("fb_propagation", [])
-    if propagation:
+    if st.session_state.get("fb_propagation_query"):
         st.markdown("#### تتبع انتشار المنشور")
         st.caption("النتائج مصنفة إلى إعادة نشر محتملة، أو نفس الحدث، أو موضوع قريب. لا تعني كثرة النتائج صحة الادعاء.")
+        st.info(f"عدد الصفحات والنتائج المطابقة أو المرتبطة: {len(propagation)}")
+        if not propagation:
+            st.warning("لم يعثر البحث العام على صفحات مفهرسة تحمل النص أو سياقاً قريباً. هذا لا يعني عدم وجود إعادة نشر؛ قد تكون المنشورات خاصة أو غير مفهرسة أو محجوبة عن محركات البحث.")
+    if propagation:
         propagation_df = pd.DataFrame(propagation).rename(columns={"title": "العنوان", "url": "الرابط", "source": "الموقع", "published": "التاريخ", "match": "التشابه", "channel": "القناة", "relation": "العلاقة", "publisher_type": "نوع الناشر", "attributed_source": "المصدر المنسوب", "searched_query": "عبارة البحث"})
         columns = ["العنوان", "الموقع", "القناة", "العلاقة", "نوع الناشر", "المصدر المنسوب", "التشابه", "التاريخ", "الرابط"]
         st.dataframe(propagation_df[[column for column in columns if column in propagation_df.columns]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
