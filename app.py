@@ -5,6 +5,7 @@ import streamlit as st
 
 from src.analyzer import analyze_news
 from src.media import extract_video_frames, fetch_public_facebook, image_to_data_url, vision_analysis
+from src.web_search import search_public_web
 
 # Streamlit Cloud stores secrets in st.secrets rather than os.environ.
 # Mirror only the relevant values so the shared analysis helpers can use them.
@@ -60,15 +61,19 @@ m4.metric("حالة النظام", "جاهز")
 tab_text, tab_image, tab_video, tab_fb = st.tabs(["📝 نص / خبر", "🖼️ صورة", "🎬 فيديو", "📘 Facebook"])
 
 with tab_text:
-    st.markdown("### تحليل خبر أو ادعاء")
+    st.markdown("### بحث ومقارنة خبر أو ادعاء")
     text = st.text_area("ألصق نص الخبر هنا", height=220, placeholder="أدخل نص الخبر أو الادعاء مع الرابط الأصلي إن وجد.", key="news_text")
-    if st.button("تحليل النص", type="primary", key="analyze_text"):
+    search_web = st.checkbox("البحث في الويب والأخبار العامة والمصادر اليمنية", value=True, key="search_web")
+    if st.button("ابحث وقارن الخبر", type="primary", key="analyze_text"):
         if not text.strip():
             st.warning("أدخل نصاً أولاً.")
         else:
             with st.spinner("يجري تحليل النص..."):
                 result = analyze_news(text, df, use_ai=use_ai)
             st.session_state["text_result"] = result
+            if search_web:
+                with st.spinner("يبحث في مصادر الأخبار العامة والويب..."):
+                    st.session_state["web_results"] = search_public_web(text, DATA_PATH.parent / "sources.csv")
     result = st.session_state.get("text_result")
     if result:
         st.divider()
@@ -88,6 +93,15 @@ with tab_text:
         if result.similar_examples:
             st.markdown("#### سجلات مشابهة")
             st.dataframe(pd.DataFrame(result.similar_examples), use_container_width=True, hide_index=True)
+        web_results = st.session_state.get("web_results", [])
+        st.markdown("#### أين ظهر هذا الخبر؟")
+        if web_results:
+            web_df = pd.DataFrame(web_results)
+            web_df = web_df.rename(columns={"title": "العنوان", "url": "الرابط", "source": "المصدر", "published": "التاريخ", "snippet": "ملخص", "match": "التشابه", "channel": "القناة"})
+            st.dataframe(web_df[["العنوان", "المصدر", "القناة", "التاريخ", "التشابه", "الرابط"]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
+            st.caption("النتائج مأخوذة من مصادر عامة وفهارس أخبار متاحة؛ عدم ظهور الخبر لا يعني أنه لم يُنشر في أي مكان.")
+        else:
+            st.info("لم تظهر نتائج عامة متاحة. جرّب عبارة أقصر أو أضف كلمات مثل المكان والجهة والتاريخ.")
 
 with tab_image:
     st.markdown("### تحليل صورة أو لقطة شاشة")
