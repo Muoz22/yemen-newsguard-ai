@@ -32,8 +32,18 @@ with st.sidebar:
     st.markdown("## 🛡️ NewsGuard")
     st.caption("تحقق متعدد الوسائط + استخبارات انتشار الأخبار")
     use_ai = st.toggle("تفعيل تحليل AI", value=True)
-    st.success("اتصال AI مفعّل") if os.getenv("OPENAI_API_KEY") else st.warning("OPENAI_API_KEY غير مضاف")
-    st.success("بحث الويب الموسع مفعّل") if os.getenv("TAVILY_API_KEY") else st.warning("TAVILY_API_KEY غير مضاف")
+
+    # عرض حالة الخدمات بدون طباعة كائن DeltaGenerator في الواجهة.
+    if os.getenv("OPENAI_API_KEY"):
+        st.success("اتصال AI مفعّل")
+    else:
+        st.warning("OPENAI_API_KEY غير مضاف")
+
+    if os.getenv("TAVILY_API_KEY"):
+        st.success("بحث الويب الموسع مفعّل")
+    else:
+        st.warning("TAVILY_API_KEY غير مضاف")
+
     st.info("التطابق والانتشار لا يثبتان صحة الخبر.")
 
 st.markdown('<div class="hero" dir="rtl"><div class="badge">NewsGuard · Propagation Intelligence</div><h1>Yemen NewsGuard AI</h1><p>ابحث عن الخبر في المصادر العامة، وابنِ بصمته، وسجّل أين ظهر ومتى رُصد وأي منصات أو حسابات عامة تشير إليه.</p></div>', unsafe_allow_html=True)
