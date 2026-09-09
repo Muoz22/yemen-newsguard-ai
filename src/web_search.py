@@ -9,7 +9,6 @@ import re
 import warnings
 import os
 from dataclasses import asdict, dataclass
-from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote, urljoin, urlsplit
 from difflib import SequenceMatcher
@@ -21,7 +20,7 @@ from bs4 import XMLParsedAsHTMLWarning
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; YemenNewsGuard/1.0; +https://github.com/Muoz22/yemen-newsguard-ai)"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; YemenNewsGuard/1.1; +https://github.com/Muoz22/yemen-newsguard-ai)"}
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 @dataclass
@@ -44,8 +43,6 @@ def _request(url: str, timeout: int = 15) -> str:
 
 
 def _rss_results(url: str, channel: str) -> list[SearchResult]:
-    # html.parser ships with Python and also handles the simple RSS tags we need.
-    # Using the optional XML parser caused FeatureNotFound on Streamlit Cloud.
     soup = BeautifulSoup(_request(url), "html.parser")
     results: list[SearchResult] = []
     for item in soup.find_all("item"):
@@ -66,7 +63,7 @@ def _rss_results(url: str, channel: str) -> list[SearchResult]:
 
 
 def _bing_html_results(query: str, channel: str = "Bing Web") -> list[SearchResult]:
-    """Parse public Bing result cards when RSS omits a short headline."""
+    """Parse public Bing result cards, including site-restricted searches."""
     try:
         soup = BeautifulSoup(_request("https://www.bing.com/search?q=" + quote(query[:220])), "html.parser")
         results: list[SearchResult] = []
@@ -83,30 +80,64 @@ def _bing_html_results(query: str, channel: str = "Bing Web") -> list[SearchResu
 
 
 def _source_page_results(sources_path: Path, query: str) -> list[SearchResult]:
+    """Search configured source homepages and paginated public indexes.
+
+    The previous implementation inspected only the current homepage. That is
+    insufficient for aggregators such as Sahaafa: a story can be published,
+    indexed, and still be absent from today's first page. We therefore inspect
+    a bounded set of public pagination pages and rank their visible headlines.
+    """
     if not sources_path.exists():
         return []
     sources = pd.read_csv(sources_path).fillna("")
-    terms = [term for term in re.findall(r"[\wء-ي]{3,}", query.lower()) if term not in {"من", "في", "على", "هذا", "التي", "الذي"}]
+    terms = [term for term in re.findall(r"[\wء-ي]{3,}", query.lower()) if term not in {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "إلى", "وقد", "كما"}]
     results: list[SearchResult] = []
+
     for _, source in sources.iterrows():
         if str(source.get("active", "TRUE")).upper() != "TRUE":
             continue
-        url = str(source.get("url", ""))
-        if not url.startswith("http"):
+        base_url = str(source.get("url", "")).rstrip("/")
+        if not base_url.startswith("http"):
             continue
-        try:
-            soup = BeautifulSoup(_request(url), "html.parser")
+
+        pages = [base_url]
+        host = urlsplit(base_url).netloc.lower()
+        # Sahaafa exposes a simple page1.html, page2.html ... public index.
+        if "sahaafa.net" in host:
+            pages.extend([f"{base_url}/page{i}.html" for i in range(1, 11)])
+            pages.extend([f"{base_url}/topic{i}.html" for i in range(1, 8)])
+
+        seen_pages = set()
+        for page_url in pages:
+            if page_url in seen_pages:
+                continue
+            seen_pages.add(page_url)
+            try:
+                soup = BeautifulSoup(_request(page_url, timeout=12), "html.parser")
+            except requests.RequestException:
+                continue
+
             for link in soup.find_all("a", href=True):
                 title = link.get_text(" ", strip=True)
-                if len(title) < 18 or len(title) > 250:
+                if len(title) < 12 or len(title) > 300:
                     continue
                 haystack = title.lower()
                 overlap = sum(term in haystack for term in terms)
-                if overlap or not terms:
-                    results.append(SearchResult(title=title, url=urljoin(url, link["href"]), source=str(source.get("name", url)),
-                                                published="", snippet="نتيجة من صفحة المصدر العامة", match=min(0.99, overlap / max(1, len(terms))), channel="مصدر يمني مباشر"))
-        except requests.RequestException:
-            continue
+                # Keep only meaningful candidates. For short queries, one exact
+                # keyword can be enough; for long claims require broader overlap.
+                threshold = 1 if len(terms) <= 3 else max(2, int(len(terms) * 0.25))
+                if overlap < threshold:
+                    continue
+                article_url = urljoin(page_url, link["href"])
+                results.append(SearchResult(
+                    title=title,
+                    url=article_url,
+                    source=str(source.get("name", base_url)),
+                    published="",
+                    snippet="نتيجة من الفهرس العام للمصدر",
+                    match=min(0.95, overlap / max(1, len(terms))),
+                    channel="مصدر يمني مباشر",
+                ))
     return results
 
 
@@ -185,7 +216,6 @@ def _exactness(query: str, result: SearchResult) -> float:
     if not query_words or not page_words:
         return 0.0
 
-    # An uninterrupted six-word phrase is strong evidence of a copied post.
     for size in (8, 7, 6, 5):
         for start in range(max(0, len(query_words) - size + 1)):
             phrase = " ".join(query_words[start:start + size])
@@ -195,8 +225,6 @@ def _exactness(query: str, result: SearchResult) -> float:
     overlap = len(set(query_words) & page_words) / len(set(query_words))
     title = normalize(result.title)
     title_similarity = SequenceMatcher(None, left, title).ratio()
-    # Related stories normally share only actors or a location; require broad
-    # claim coverage before calling a result a match.
     score = overlap * 0.72 + title_similarity * 0.28
     return round(score, 2) if overlap >= 0.65 else round(score * 0.45, 2)
 
@@ -256,15 +284,14 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     variants = [query[:180]]
     if len(words) >= 4:
         variants.append(" ".join(words[:8]))
-    # Search the event, place, and actors separately so a copied social post
-    # does not need to match a publisher's headline word for word.
     if len(words) >= 4:
         variants.append(" ".join(words[-6:]))
     ai_variants = _ai_search_queries(query)
     variants = ai_variants + variants
     variants = list(dict.fromkeys(v for v in variants if v.strip()))[:5]
     collected: list[SearchResult] = list(direct_results)
-    # Exact and platform-scoped searches reduce unrelated topic matches.
+
+    # Tavily gets both broad and exact/platform-scoped queries when configured.
     tavily_queries = [
         query,
         *ai_variants[:3],
@@ -276,6 +303,7 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     ]
     for tavily_query in tavily_queries:
         collected.extend(_tavily_results(tavily_query))
+
     for search_query in variants:
         encoded = quote(search_query[:240])
         feeds = [
@@ -294,19 +322,28 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
                 collected.extend(found)
             except requests.RequestException:
                 continue
+
         collected.extend(_bing_html_results(search_query))
+        collected.extend(_bing_html_results(f'site:sahaafa.net "{search_query[:180]}"', "صحافة نت عبر Bing Web"))
+
         found = _source_page_results(sources_path, search_query)
         for result in found:
             result.searched_query = search_query
         collected.extend(found)
+
     unique: dict[str, SearchResult] = {}
     for result in collected:
         if result.url and result.url not in unique:
             unique[result.url] = result
-    candidates = list(unique.values())[:20]
+
+    # Enrich more than the old fixed first-20 slice. Source-specific hits must
+    # be read before final scoring, otherwise an older Sahaafa page can be
+    # discarded merely because it was discovered later in the run.
+    candidates = list(unique.values())[:80]
     for index, item in enumerate(candidates):
         candidates[index] = _enrich_page(item)
     unique.update({item.url: item for item in candidates})
+
     ranked = _similarity(query, list(unique.values()))
     for item in ranked:
         item.match = _exactness(query, item)
@@ -321,8 +358,7 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
             item.match_type = "تطابق قوي"
         else:
             item.match_type = "تطابق جزئي"
+
     ranked.sort(key=lambda item: item.match, reverse=True)
-    # Keep weakly related headlines out of the evidence table. A low score is
-    # not evidence that the claim was published; it is only a search lead.
     ranked = [item for item in ranked if item.match >= 0.60 or (_social_channel(item.url) and item.match >= 0.35) or item.match_type.startswith("رابط مباشر مقدم من المستخدم")]
     return [asdict(item) for item in ranked[:max_results]]
