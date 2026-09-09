@@ -243,11 +243,14 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     # does not need to match a publisher's headline word for word.
     if len(words) >= 4:
         variants.append(" ".join(words[-6:]))
-    variants = _ai_search_queries(query) + variants
+    ai_variants = _ai_search_queries(query)
+    variants = ai_variants + variants
     variants = list(dict.fromkeys(v for v in variants if v.strip()))[:8]
     collected: list[SearchResult] = list(direct_results)
     # Exact and platform-scoped searches reduce unrelated topic matches.
     tavily_queries = [
+        query,
+        *ai_variants[:3],
         f'"{query}"',
         f'site:facebook.com "{query}"',
         f'site:x.com "{query}"',
