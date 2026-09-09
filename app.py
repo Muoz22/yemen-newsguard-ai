@@ -31,12 +31,14 @@ html, body, [class*="css"] { font-family: 'Cairo', sans-serif; }
 """, unsafe_allow_html=True)
 
 DATA_PATH = Path(__file__).parent / "data" / "news_dataset.csv"
+SOURCES_PATH = DATA_PATH.parent / "sources.csv"
 
 @st.cache_data
 def load_data():
     return pd.read_csv(DATA_PATH).fillna("")
 
 df = load_data()
+sources_df = pd.read_csv(SOURCES_PATH).fillna("") if SOURCES_PATH.exists() else pd.DataFrame()
 
 with st.sidebar:
     st.markdown("## 🛡️ NewsGuard")
@@ -54,7 +56,7 @@ st.markdown('<div class="hero" dir="rtl"><div class="badge">نص · صورة · 
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("سجلات مرجعية", len(df))
-m2.metric("مصادر معروفة", df["source"].nunique() if "source" in df else 0)
+m2.metric("مصادر البحث المضافة", len(sources_df))
 m3.metric("أنواع المحتوى", "4")
 m4.metric("حالة النظام", "جاهز")
 
@@ -79,9 +81,10 @@ with tab_text:
         st.divider()
         a, b, c = st.columns(3)
         a.metric("التقييم المبدئي", result.verdict)
-        b.metric("مؤشر الحاجة للتحقق", f"{result.score:.0%}")
+        b.metric("مؤشر إشارات الخطر", f"{result.score:.0%}")
         c.metric("الثقة", f"{result.confidence:.0%}")
         st.caption(f"المحرك: {result.model} — {result.source}")
+        st.warning("هذه النسبة ليست احتمال صحة أو تضليل، وليست مبنية على عدد نتائج البحث. هي مؤشر فرز أولي يعتمد على خصائص النص مثل غياب الرابط واللغة المثيرة وقِصر الادعاء.")
         st.progress(result.score)
         x, y = st.columns(2)
         with x:
@@ -97,8 +100,8 @@ with tab_text:
         st.markdown("#### أين ظهر هذا الخبر؟")
         if web_results:
             web_df = pd.DataFrame(web_results)
-            web_df = web_df.rename(columns={"title": "العنوان", "url": "الرابط", "source": "المصدر", "published": "التاريخ", "snippet": "ملخص", "match": "التشابه", "channel": "القناة"})
-            st.dataframe(web_df[["العنوان", "المصدر", "القناة", "التاريخ", "التشابه", "الرابط"]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
+            web_df = web_df.rename(columns={"title": "العنوان", "url": "الرابط", "source": "المصدر", "published": "التاريخ", "snippet": "ملخص", "match": "التشابه النصي", "channel": "القناة", "searched_query": "عبارة البحث"})
+            st.dataframe(web_df[["العنوان", "المصدر", "القناة", "التاريخ", "التشابه النصي", "عبارة البحث", "الرابط"]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
             st.caption("النتائج مأخوذة من مصادر عامة وفهارس أخبار متاحة؛ عدم ظهور الخبر لا يعني أنه لم يُنشر في أي مكان.")
         else:
             st.info("لم تظهر نتائج عامة متاحة. جرّب عبارة أقصر أو أضف كلمات مثل المكان والجهة والتاريخ.")

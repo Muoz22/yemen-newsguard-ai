@@ -28,6 +28,7 @@ class SearchResult:
     snippet: str
     match: float = 0.0
     channel: str = "ويب عام"
+    searched_query: str = ""
 
 
 def _request(url: str, timeout: int = 15) -> str:
@@ -105,18 +106,34 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
     query = re.sub(r"\s+", " ", (query or "")).strip()
     if not query:
         return []
-    encoded = quote(query[:240])
-    feeds = [
-        (f"https://news.google.com/rss/search?q={encoded}&hl=ar&gl=YE&ceid=YE:ar", "Google News"),
-        (f"https://www.bing.com/news/search?q={encoded}&format=rss", "Bing News"),
-    ]
+    words = [w for w in re.findall(r"[\wء-ي]{3,}", query.lower()) if w not in {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "إلى", "وقد", "كما"}]
+    variants = [query[:180]]
+    if len(words) >= 4:
+        variants.append(" ".join(words[:8]))
+    # Search the event, place, and actors separately so a copied social post
+    # does not need to match a publisher's headline word for word.
+    if len(words) >= 4:
+        variants.append(" ".join(words[-6:]))
+    variants = list(dict.fromkeys(v for v in variants if v.strip()))
     collected: list[SearchResult] = []
-    for url, channel in feeds:
-        try:
-            collected.extend(_rss_results(url, channel))
-        except requests.RequestException:
-            continue
-    collected.extend(_source_page_results(sources_path, query))
+    for search_query in variants:
+        encoded = quote(search_query[:240])
+        feeds = [
+            (f"https://news.google.com/rss/search?q={encoded}&hl=ar&gl=YE&ceid=YE:ar", "Google News"),
+            (f"https://www.bing.com/news/search?q={encoded}&format=rss", "Bing News"),
+        ]
+        for url, channel in feeds:
+            try:
+                found = _rss_results(url, channel)
+                for result in found:
+                    result.searched_query = search_query
+                collected.extend(found)
+            except requests.RequestException:
+                continue
+        found = _source_page_results(sources_path, search_query)
+        for result in found:
+            result.searched_query = search_query
+        collected.extend(found)
     unique: dict[str, SearchResult] = {}
     for result in collected:
         if result.url and result.url not in unique:
