@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 from src.analyzer import analyze_news
@@ -21,6 +22,27 @@ HISTORY_DB = ROOT / "data" / "newsguard_history.db"
 df = pd.read_csv(DATA_PATH).fillna("")
 sources_df = pd.read_csv(SOURCES_PATH).fillna("") if SOURCES_PATH.exists() else pd.DataFrame()
 
+
+def pretty_time(value: str) -> str:
+    """Convert ISO/UTC timestamps to a compact, readable local-style display."""
+    value = str(value or "").strip()
+    if not value:
+        return "—"
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        return parsed.strftime("%Y-%m-%d %H:%M")
+    except ValueError:
+        return value[:16].replace("T", " ")
+
+
+def display_source(item: dict) -> tuple[str, str]:
+    """Return original publisher and aggregator separately."""
+    source = str(item.get("source", "") or "").strip()
+    domain = str(item.get("domain", "") or "").strip().lower()
+    if domain == "sahaafa.net":
+        return (source if source and source != "صحافة نت" else "غير مستخرج", "صحافة نت")
+    return (source or domain or "غير معروف", "—")
+
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700;800&display=swap');
@@ -32,18 +54,14 @@ with st.sidebar:
     st.markdown("## 🛡️ NewsGuard")
     st.caption("تحقق متعدد الوسائط + استخبارات انتشار الأخبار")
     use_ai = st.toggle("تفعيل تحليل AI", value=True)
-
-    # عرض حالة الخدمات بدون طباعة كائن DeltaGenerator في الواجهة.
     if os.getenv("OPENAI_API_KEY"):
         st.success("اتصال AI مفعّل")
     else:
         st.warning("OPENAI_API_KEY غير مضاف")
-
     if os.getenv("TAVILY_API_KEY"):
         st.success("بحث الويب الموسع مفعّل")
     else:
         st.warning("TAVILY_API_KEY غير مضاف")
-
     st.info("التطابق والانتشار لا يثبتان صحة الخبر.")
 
 st.markdown('<div class="hero" dir="rtl"><div class="badge">NewsGuard · Propagation Intelligence</div><h1>Yemen NewsGuard AI</h1><p>ابحث عن الخبر في المصادر العامة، وابنِ بصمته، وسجّل أين ظهر ومتى رُصد وأي منصات أو حسابات عامة تشير إليه.</p></div>', unsafe_allow_html=True)
@@ -81,26 +99,43 @@ with tab_text:
         st.divider(); st.markdown("## 📡 أين ظهر هذا الخبر؟")
         st.caption("أول ظهور هنا يعني أول ظهور مرصود/مفهرس في البيانات المتاحة، وليس بالضرورة أول نشر في العالم.")
         p1,p2,p3,p4,p5=st.columns(5)
-        p1.metric("النتائج",summary["observations"]); p2.metric("تطابقات قوية",summary["strong_matches"]); p3.metric("النطاقات",len(summary["domain_counts"])); p4.metric("المنصات",len(summary["platform_counts"])); p5.metric("Story ID",summary["story_id"][:10])
+        p1.metric("النتائج",summary["observations"]); p2.metric("تطابقات قوية",summary["strong_matches"]); p3.metric("المصادر المتنوعة",len(summary["domain_counts"])); p4.metric("المنصات",len(summary["platform_counts"])); p5.metric("Story ID",summary["story_id"][:10])
         st.markdown("### 🔎 بصمة الخبر"); st.code(fingerprint(text)); st.write("**عبارات مفتاحية:**"," · ".join(key_phrases(text)))
         history=summary.get("history",[])
         if history:
             rows=[]
             for x in history:
                 match=float(x.get("match",0) or 0); domain=str(x.get("domain","")); platform=str(x.get("platform",""))
+                original_source, aggregator = display_source(x)
                 if "sahaafa.net" in domain: status="مجمع/فهرسة"
                 elif platform in {"Facebook","X / Twitter","Telegram","TikTok","Instagram","YouTube"}: status="إشارة/إعادة نشر محتملة"
                 elif match>=.85: status="تطابق قوي"
                 elif match>=.70: status="تطابق محتمل"
                 else: status="مادة مرتبطة"
-                rows.append({"المصدر":x.get("source") or domain,"النطاق":domain,"المنصة":platform,"الحساب/الصفحة":x.get("account_or_page",""),"التاريخ المنشور":x.get("published",""),"أول رصد":x.get("first_seen",""),"آخر رصد":x.get("last_seen",""),"التطابق":f"{match:.0%}","الحالة":status,"الرابط":x.get("url","")})
+                rows.append({
+                    "عنوان الخبر":x.get("title") or "—",
+                    "المصدر الأصلي":original_source,
+                    "المجمّع":aggregator,
+                    "النطاق":domain or "—",
+                    "المنصة":platform or "—",
+                    "الحساب/الصفحة":x.get("account_or_page","") or "—",
+                    "التاريخ المنشور":pretty_time(x.get("published")),
+                    "أول رصد":pretty_time(x.get("first_seen")),
+                    "آخر رصد":pretty_time(x.get("last_seen")),
+                    "التطابق":f"{match:.0%}",
+                    "الحالة":status,
+                    "الرابط":x.get("url","")
+                })
             st.dataframe(pd.DataFrame(rows),use_container_width=True,hide_index=True,column_config={"الرابط":st.column_config.LinkColumn("الرابط")})
             candidate=summary.get("first_observed_candidate")
-            if candidate: st.info(f"أقدم مرشح مرصود وفق التاريخ المتاح: {candidate.get('source') or candidate.get('domain','')} — {candidate.get('published','غير محدد')}. هذا ليس إثباتاً للمصدر الأصلي.")
+            if candidate:
+                candidate_source, candidate_aggregator = display_source(candidate)
+                candidate_time = pretty_time(candidate.get("published") or candidate.get("first_seen"))
+                st.info(f"أقدم مرشح مرصود وفق التاريخ المتاح: {candidate_source} — {candidate_time}. هذا ليس إثباتاً للمصدر الأصلي.")
             d1,d2=st.columns(2)
             with d1: st.markdown("**حسب المنصة**"); st.bar_chart(pd.Series(summary["platform_counts"],name="عدد النتائج"))
-            with d2: st.markdown("**حسب النطاق**"); st.bar_chart(pd.Series(summary["domain_counts"],name="عدد النتائج"))
-            timeline=[{"الوقت/التاريخ المتاح":x.get("published") or x.get("first_seen"),"المصدر":x.get("source") or x.get("domain"),"المنصة":x.get("platform"),"التطابق":float(x.get("match",0) or 0)} for x in history if x.get("published") or x.get("first_seen")]
+            with d2: st.markdown("**حسب المصدر/النطاق**"); st.bar_chart(pd.Series(summary["domain_counts"],name="عدد النتائج"))
+            timeline=[{"الوقت/التاريخ المتاح":pretty_time(x.get("published") or x.get("first_seen")),"عنوان الخبر":x.get("title") or "—","المصدر":display_source(x)[0],"المنصة":x.get("platform"),"التطابق":float(x.get("match",0) or 0)} for x in history if x.get("published") or x.get("first_seen")]
             st.markdown("### 🧭 خط زمني للرصد"); st.dataframe(pd.DataFrame(timeline),use_container_width=True,hide_index=True)
         st.markdown("### 📥 التقرير")
         d1,d2,d3=st.columns(3)
