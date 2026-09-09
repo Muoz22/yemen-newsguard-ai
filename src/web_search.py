@@ -262,7 +262,7 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
         variants.append(" ".join(words[-6:]))
     ai_variants = _ai_search_queries(query)
     variants = ai_variants + variants
-    variants = list(dict.fromkeys(v for v in variants if v.strip()))[:8]
+    variants = list(dict.fromkeys(v for v in variants if v.strip()))[:5]
     collected: list[SearchResult] = list(direct_results)
     # Exact and platform-scoped searches reduce unrelated topic matches.
     tavily_queries = [
