@@ -2,3 +2,6 @@ source_id,name,url,source_type,source_role,platform,active,description
 YEM001,وكالة الأنباء اليمنية سبأ,https://www.sabanew.net/,OFFICIAL,PRIMARY,NEWS_AGENCY,TRUE,وكالة الأنباء الرسمية للجمهورية اليمنية
 YEM002,صحافة نت,https://sahaafa.net/,AGGREGATOR,DISCOVERY,NEWS_AGGREGATOR,TRUE,مجمع أخبار يمني يستخدم لاكتشاف الأخبار والمصادر الأصلية
 YEM003,رئاسة مجلس الوزراء,https://www.pmo-ye.net/,OFFICIAL,PRIMARY,GOVERNMENT,TRUE,مصدر رسمي لبيانات وأخبار رئاسة مجلس الوزراء
+YEM004,موقع كل يوم - أخبار اليمن,https://www.klyoum.com/yemen-news/,AGGREGATOR,DISCOVERY,NEWS_AGGREGATOR,TRUE,مجمع إخباري عام يساعد على اكتشاف الأخبار اليمنية ومصادرها المنسوبة
+YEM005,أخبار اليمن الآن,https://yemennewsnow.com/,AGGREGATOR,DISCOVERY,NEWS_AGGREGATOR,TRUE,مجمع أخبار يمني لاكتشاف القصص والمصادر الظاهرة في الصفحات العامة
+YEM006,مصادر نت,https://www.m.msader-ye.net/,AGGREGATOR,DISCOVERY,NEWS_AGGREGATOR,TRUE,مجمع أخبار يمني لاكتشاف الأخبار والمصادر المنشورة علناً
