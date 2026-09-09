@@ -5,7 +5,7 @@ import streamlit as st
 
 from src.analyzer import analyze_news
 from src.media import extract_video_frames, fetch_public_facebook, image_to_data_url, vision_analysis
-from src.web_search import search_public_web
+from src.web_search import search_public_web, track_propagation
 
 # Streamlit Cloud stores secrets in st.secrets rather than os.environ.
 # Mirror only the relevant values so the shared analysis helpers can use them.
@@ -222,7 +222,7 @@ with tab_fb:
             st.warning("أدخل نص المنشور أولاً ثم اضغط تتبع الانتشار.")
         else:
             with st.spinner("يبحث عن إعادة النشر والصيغ المشابهة..."):
-                st.session_state["fb_propagation"] = search_public_web(combined, SOURCES_PATH, max_results=40, include_related=True)
+                st.session_state["fb_propagation"] = track_propagation(combined, SOURCES_PATH, max_results=40)
             st.session_state["fb_propagation_query"] = combined
     propagation = st.session_state.get("fb_propagation", [])
     if st.session_state.get("fb_propagation_query"):

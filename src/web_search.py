@@ -377,3 +377,20 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25, inc
     # not evidence that the claim was published; it is only a search lead.
     ranked = [item for item in ranked if item.match >= 0.60 or item.match_type.startswith("رابط مباشر مقدم من المستخدم") or (include_related and item.relation == "نفس الحدث أو سياق مرتبط") or (item.relation == "نفس الحدث أو سياق مرتبط" and item.publisher_type != "ناشر ويب")]
     return [asdict(item) for item in ranked[:max_results]]
+
+
+def track_propagation(claim: str, sources_path: Path, max_results: int = 40) -> list[dict]:
+    """Search propagation using short entity/event phrases, not only the full post."""
+    words = [w for w in re.findall(r"[\wء-ي]{3,}", claim.lower()) if w not in {"من", "في", "على", "هذا", "هذه", "التي", "الذي", "عن", "إلى", "وقد", "كما", "تم", "صوتية", "فيديوهات", "تسجيلات"}]
+    queries = _ai_search_queries(claim)
+    if len(words) >= 2:
+        queries += [" ".join(words[:6]), " ".join(words[-6:])]
+    queries += ["طارق صالح تسجيلات", "طارق صالح تسجيلات مزيفة", "طارق صالح الذكاء الاصطناعي"] if "طارق" in claim and "صالح" in claim else []
+    merged: dict[str, dict] = {}
+    for query in list(dict.fromkeys(q.strip() for q in queries if q.strip()))[:4]:
+        for item in search_public_web(query, sources_path, max_results=15, include_related=True):
+            old = merged.get(item["url"])
+            if old is None or float(item.get("match", 0)) > float(old.get("match", 0)):
+                item["searched_query"] = query
+                merged[item["url"]] = item
+    return sorted(merged.values(), key=lambda item: float(item.get("match", 0)), reverse=True)[:max_results]
