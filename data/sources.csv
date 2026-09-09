@@ -1,4 +1,4 @@
-source_id,name,url,source_type,platform,description
-YEM001,وكالة الأنباء اليمنية سبأ,https://www.sabanew.net/,OFFICIAL,NEWS_AGENCY,مصدر إخباري رسمي
-YEM002,صحافة نت,https://sahaafa.net/,AGGREGATOR,NEWS_AGGREGATOR,مجمع أخبار يمني
-YEM003,رئاسة مجلس الوزراء,https://www.pmo-ye.net/,OFFICIAL,GOVERNMENT,المصدر الرسمي لبيانات مجلس الوزراء
+source_id,name,url,source_type,source_role,platform,active,description
+YEM001,وكالة الأنباء اليمنية سبأ,https://www.sabanew.net/,OFFICIAL,PRIMARY,NEWS_AGENCY,TRUE,وكالة الأنباء الرسمية للجمهورية اليمنية
+YEM002,صحافة نت,https://sahaafa.net/,AGGREGATOR,DISCOVERY,NEWS_AGGREGATOR,TRUE,مجمع أخبار يمني يستخدم لاكتشاف الأخبار والمصادر الأصلية
+YEM003,رئاسة مجلس الوزراء,https://www.pmo-ye.net/,OFFICIAL,PRIMARY,GOVERNMENT,TRUE,مصدر رسمي لبيانات وأخبار رئاسة مجلس الوزراء
