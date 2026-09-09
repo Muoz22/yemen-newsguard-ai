@@ -116,14 +116,14 @@ def _tavily_results(query: str) -> list[SearchResult]:
         response = requests.post(
             "https://api.tavily.com/search",
             json={"api_key": api_key, "query": query, "search_depth": "advanced", "max_results": 10,
-                  "include_answer": False, "include_raw_content": False},
+                  "include_answer": False, "include_raw_content": True},
             timeout=30,
         )
         response.raise_for_status()
         items = response.json().get("results", [])
         return [SearchResult(title=str(item.get("title", "")), url=str(item.get("url", "")),
                              source=str(item.get("url", "")).split("/")[2] if item.get("url") else "ويب عام",
-                             published=str(item.get("published_date", "")), snippet=str(item.get("content", ""))[:500],
+                             published=str(item.get("published_date", "")), snippet=str(item.get("raw_content") or item.get("content", ""))[:10000],
                              channel="فهرس ويب موسع", searched_query=query) for item in items if item.get("url")]
     except (requests.RequestException, ValueError, TypeError):
         return []
