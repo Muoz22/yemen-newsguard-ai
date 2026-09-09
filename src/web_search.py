@@ -190,7 +190,15 @@ def search_public_web(query: str, sources_path: Path, max_results: int = 25) -> 
         variants.append(" ".join(words[-6:]))
     variants = list(dict.fromkeys(v for v in variants if v.strip()))
     collected: list[SearchResult] = []
-    collected.extend(_tavily_results(query))
+    # Exact and platform-scoped searches reduce unrelated topic matches.
+    tavily_queries = [
+        f'"{query}"',
+        f'site:facebook.com "{query}"',
+        f'site:x.com "{query}"',
+        f'site:twitter.com "{query}"',
+    ]
+    for tavily_query in tavily_queries:
+        collected.extend(_tavily_results(tavily_query))
     for search_query in variants:
         encoded = quote(search_query[:240])
         feeds = [
