@@ -204,6 +204,8 @@ with tab_fb:
             if combined:
                 st.session_state["fb_metadata"] = metadata
                 st.session_state["fb_result"] = analyze_news(combined, df, use_ai=use_ai)
+                with st.spinner("يتتبع إعادة النشر والصيغ المشابهة عبر الويب وFacebook وX..."):
+                    st.session_state["fb_propagation"] = search_public_web(combined, SOURCES_PATH, max_results=40)
             else: st.warning("لم يمكن قراءة البيانات العامة؛ الصق نص المنشور يدوياً.")
     if st.session_state.get("fb_metadata", {}).get("status"): st.info(st.session_state["fb_metadata"]["status"])
     if st.session_state.get("fb_result"):
@@ -211,6 +213,13 @@ with tab_fb:
         a, b, c = st.columns(3)
         a.metric("التقييم", result.verdict); b.metric("المؤشر", f"{result.score:.0%}"); c.metric("الثقة", f"{result.confidence:.0%}")
         for item in result.reasons: st.markdown(f"- {item}")
+    propagation = st.session_state.get("fb_propagation", [])
+    if propagation:
+        st.markdown("#### تتبع انتشار المنشور")
+        st.caption("النتائج مصنفة إلى إعادة نشر محتملة، أو نفس الحدث، أو موضوع قريب. لا تعني كثرة النتائج صحة الادعاء.")
+        propagation_df = pd.DataFrame(propagation).rename(columns={"title": "العنوان", "url": "الرابط", "source": "الموقع", "published": "التاريخ", "match": "التشابه", "channel": "القناة", "relation": "العلاقة", "publisher_type": "نوع الناشر", "attributed_source": "المصدر المنسوب", "searched_query": "عبارة البحث"})
+        columns = ["العنوان", "الموقع", "القناة", "العلاقة", "نوع الناشر", "المصدر المنسوب", "التشابه", "التاريخ", "الرابط"]
+        st.dataframe(propagation_df[[column for column in columns if column in propagation_df.columns]], use_container_width=True, hide_index=True, column_config={"الرابط": st.column_config.LinkColumn("الرابط")})
 
 with st.expander("📚 قاعدة الأخبار المرجعية"):
     st.dataframe(df, use_container_width=True, hide_index=True)
